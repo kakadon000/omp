@@ -8,7 +8,7 @@ use tauri::Manager;
 #[cfg(windows)]
 fn windows_build() -> u32 {
     tauri_plugin_os::version()
-        .unwrap_or_default()
+        .to_string()
         .split('.')
         .nth(2)
         .and_then(|s| s.parse().ok())
@@ -18,17 +18,12 @@ fn windows_build() -> u32 {
 /// Apply the right material for this Windows generation.
 /// Rule from the spec: detect the environment, never assume both render the same.
 #[cfg(windows)]
-fn apply_effect(window: &tauri::window::Window, mica: bool) {
-    use tauri::window::{WindowEffect, WindowEffectsConfig};
-    let cfg = WindowEffectsConfig {
-        effects: vec![if mica { WindowEffect::Mica } else { WindowEffect::Acrylic }],
-        state: None,
-        radius: None,
-        color: None,
-    };
+fn apply_effect(window: &tauri::webview::WebviewWindow, mica: bool) {
+    use tauri::utils::config::{WindowEffect, WindowEffectsConfig};
+    let effects = vec![if mica { WindowEffect::Mica } else { WindowEffect::Acrylic }];
     // If the requested material is unsupported, fall back silently —
     // the CSS layer already ships a translucent fallback.
-    if window.set_effects(cfg).is_err() && mica {
+    if window.set_effects(WindowEffectsConfig { effects, state: None, radius: None, color: None }).is_err() && mica {
         let _ = window.set_effects(WindowEffectsConfig {
             effects: vec![WindowEffect::Acrylic],
             state: None,
@@ -40,10 +35,10 @@ fn apply_effect(window: &tauri::window::Window, mica: bool) {
 
 #[tauri::command]
 fn close_splash(app: tauri::AppHandle) {
-    if let Some(splash) = app.get_window("splashscreen") {
+    if let Some(splash) = app.get_webview_window("splashscreen") {
         let _ = splash.close();
     }
-    if let Some(main) = app.get_window("main") {
+    if let Some(main) = app.get_webview_window("main") {
         let _ = main.show();
         let _ = main.set_focus();
     }
@@ -51,14 +46,14 @@ fn close_splash(app: tauri::AppHandle) {
 
 #[tauri::command]
 fn win_min(app: tauri::AppHandle) {
-    if let Some(w) = app.get_window("main") {
+    if let Some(w) = app.get_webview_window("main") {
         let _ = w.minimize();
     }
 }
 
 #[tauri::command]
 fn win_max_toggle(app: tauri::AppHandle) -> bool {
-    if let Some(w) = app.get_window("main") {
+    if let Some(w) = app.get_webview_window("main") {
         let maxed = w.is_maximized().unwrap_or(false);
         if maxed {
             let _ = w.unmaximize();
@@ -72,7 +67,7 @@ fn win_max_toggle(app: tauri::AppHandle) -> bool {
 
 #[tauri::command]
 fn win_close(app: tauri::AppHandle) {
-    if let Some(w) = app.get_window("main") {
+    if let Some(w) = app.get_webview_window("main") {
         let _ = w.close();
     }
 }
@@ -84,7 +79,7 @@ fn shell_info() -> serde_json::Value {
     #[cfg(windows)]
     {
         let build = windows_build();
-        let v = tauri_plugin_os::version().unwrap_or_default();
+        let v = tauri_plugin_os::version().to_string();
         serde_json::json!({
             "os": "windows",
             "win": if build >= 22000 { "11" } else { "10" },
@@ -119,10 +114,10 @@ pub fn run() {
             #[cfg(windows)]
             {
                 let mica = windows_build() >= 22000;
-                if let Some(w) = app.get_window("main") {
+                if let Some(w) = app.get_webview_window("main") {
                     apply_effect(&w, mica);
                 }
-                if let Some(s) = app.get_window("splashscreen") {
+                if let Some(s) = app.get_webview_window("splashscreen") {
                     apply_effect(&s, mica);
                 }
             }
