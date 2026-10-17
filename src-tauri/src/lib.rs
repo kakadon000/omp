@@ -2,7 +2,7 @@
 // Owns: window effects (Mica / Acrylic per Windows generation), splash handoff,
 // custom titlebar window controls, and shell info for the UI.
 
-use tauri::Manager;
+use tauri::{AppHandle, Manager};
 
 #[cfg(windows)]
 #[path = "mpv.rs"]
@@ -36,6 +36,34 @@ fn apply_effect(window: &tauri::webview::WebviewWindow, mica: bool) {
         let _ = window.set_effects(EffectsBuilder::new().effect(Effect::Acrylic).build());
     }
 }
+
+/// THE v0.5.0 CPU FIX.
+///
+/// While the native mpv surface plays video BELOW the transparent webview,
+/// any DWM material (Mica / dynamic Acrylic blur-behind) forces the whole
+/// window — video frames included — through per-frame blur recomposition.
+/// That was the v0.3.0/v0.4.0 CPU burn (70%). So: strip the material the
+/// moment playback attaches, restore it on detach. The glass look still
+/// exists on every non-playing screen; during playback solid panels win.
+#[cfg(windows)]
+pub(crate) fn set_playback_effects(app: &AppHandle, playing: bool) {
+    if let Some(w) = app.get_webview_window("main") {
+        if playing {
+            // window-vibrancy 0.8 clears per material: Mica on Win11,
+            // Acrylic on Win10 — the same pair apply_effect() sets.
+            if windows_build() >= 22000 {
+                let _ = window_vibrancy::clear_mica(&w);
+            } else {
+                let _ = window_vibrancy::clear_acrylic(&w);
+            }
+        } else {
+            apply_effect(&w, windows_build() >= 22000);
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub(crate) fn set_playback_effects(_app: &AppHandle, _playing: bool) {}
 
 #[tauri::command]
 fn close_splash(app: tauri::AppHandle) {
@@ -132,6 +160,7 @@ pub fn run() {
             mpv::mpv_sub_add,
             mpv::mpv_set_track,
             mpv::mpv_snapshot,
+            mpv::mpv_stats,
             library::library_add_folder,
             library::library_folders,
             library::library_remove_folder,

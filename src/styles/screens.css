@@ -173,6 +173,18 @@ html.mpv-live .player-bar { background: rgba(14, 15, 20, 0.94); }
 html.mpv-live .player-queue { background: var(--bg-solid); }
 html.mpv-live .stage-big-play { backdrop-filter: none; } /* blur over the native surface is wasted work */
 
+/* v0.5.0 perf hardening: while the native engine is attached the webview is
+   a transparent tunnel over live video — ANY backdrop-filter that samples
+   that backdrop (glass panels, toasts, modals) gets recomputed on every
+   video frame. Blur sampling a 60fps surface = the CPU burn. Kill all of
+   them engine-wide; panels below already carry solid fallback surfaces. */
+html.mpv-live *,
+html.mpv-live *::before,
+html.mpv-live *::after {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
 /* perf: while actually playing, kill every expensive effect inside the
    player (blurs, transitions, shadows) — they repaint per video frame */
 .player-shell[data-playing="1"] .stage-big-play { transition: none; }

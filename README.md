@@ -27,6 +27,34 @@ distinctive, not into reinventing video decoding.
 - **Theme Studio** — dark/light/system, five tasteful accents, adjustable
   transparency, Reduced Effects for low-end PCs.
 
+## What's new in v0.5.0 — the ultra-light engine fix (CPU 70% → done)
+
+Three stacked causes were burning CPU during playback, and all three are now
+fixed at the root:
+
+- **The window material fought the video.** OMP's Mica (Win11) / Acrylic
+  (Win10) blur-behind stayed attached while the native mpv surface played
+  video *underneath* the transparent webview — so Windows recomposited a
+  full-window blur on every single video frame. The material now detaches
+  the moment playback attaches and returns when it ends. The glass look is
+  untouched on every non-playing screen.
+- **Glass blur sampled the live video.** Any `backdrop-filter` panel whose
+  backdrop included the transparent video tunnel was recomputed per frame.
+  All backdrop blurs are now suspended engine-wide while `mpv-live` is
+  active (panels switch to their solid surfaces).
+- **Silent software decode.** `hwdec=auto-safe` refuses hardware decode on
+  non-whitelisted GPU/driver combos and falls back to CPU decoding without
+  telling anyone. The engine now requests `hwdec=auto`, adds software-decode
+  fast paths (`vd-lavc-fast`, skip-loopfilter) as a safety net, and — most
+  importantly — **Stats for nerds (press `I`) now shows the live decode
+  path**: `hardware · d3d11va` in green, or an explicit amber
+  "software (slower — enable HW accel in Settings)" warning. Nothing is
+  silent anymore.
+
+Also in v0.5.0: the stats overlay reports the active renderer, container and
+rendered FPS, dropped frames, A/V sync offset and bitrate (probed on demand
+at 1 Hz *only while the overlay is open* — zero idle timers, per spec).
+
 ## What's new in v0.4.0 — bulletproof installer + the real SQLite library (Phase 2)
 
 - **Fixed: the installer that couldn't install** — v0.3's setup could fail with

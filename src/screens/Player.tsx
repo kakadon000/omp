@@ -74,6 +74,9 @@ export function Player({ settings }: { settings: Settings }) {
   const [subDelay, setSubDelay] = useState(0);
   const [audioDelay, setAudioDelay] = useState(0);
   const [showStats, setShowStats] = useState(false);
+  const [engStats, setEngStats] = useState<{
+    hwdec: string; vo: string; vf_fps: number; fps: number; dropped: number; avsync: number; bitrate: number;
+  } | null>(null);
   const [jumpOpen, setJumpOpen] = useState(false);
   const [queueOpen, setQueueOpen] = useState(true);
   const [osd, setOsd] = useState<{ id: number; msg: string } | null>(null);
@@ -250,6 +253,21 @@ export function Player({ settings }: { settings: Settings }) {
     document.documentElement.classList.toggle("mpv-live", isMpv);
     return () => document.documentElement.classList.remove("mpv-live");
   }, [isMpv]);
+
+  // Stats for nerds — demand-driven: the 1s engine probe runs ONLY while the
+  // overlay is open (spec: "no unnecessary timers"); closed = zero cost.
+  useEffect(() => {
+    if (!showStats || !isMpv) { setEngStats(null); return; }
+    let dead = false;
+    const pull = () => {
+      void invoke<{
+        hwdec: string; vo: string; vf_fps: number; fps: number; dropped: number; avsync: number; bitrate: number;
+      } | null>("mpv_stats").then((s) => { if (!dead) setEngStats(s ?? null); });
+    };
+    pull();
+    const iv = window.setInterval(pull, 1000);
+    return () => { dead = true; window.clearInterval(iv); };
+  }, [showStats, isMpv]);
 
   // engine-scoped transforms + adjustments (GPU-side, ~zero CPU cost)
   useEffect(() => {
@@ -1003,6 +1021,17 @@ export function Player({ settings }: { settings: Settings }) {
             <div className="stats">
               <div><b>{title}</b></div>
               <div>Engine&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{isMpv ? `mpv (libmpv${eng.version ? ` ${eng.version}` : ""})` : "WebView2"}</div>
+              {isMpv && engStats && (
+                <>
+                  <div>Decode&nbsp;&nbsp;&nbsp;&nbsp;{engStats.hwdec && engStats.hwdec !== "no"
+                    ? <span style={{ color: "#3fd68f" }}>hardware · {engStats.hwdec}</span>
+                    : <span style={{ color: "#ffb454" }}>software (slower — enable HW accel in Settings)</span>}</div>
+                  <div>Renderer&nbsp;&nbsp;&nbsp;{engStats.vo || "?"}</div>
+                  <div>FPS&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{engStats.fps > 0 ? `${engStats.fps.toFixed(2)} container` : "?"}{engStats.vf_fps > 0 ? ` · ${engStats.vf_fps.toFixed(1)} rendered` : ""}</div>
+                  <div>Dropped&nbsp;&nbsp;&nbsp;{engStats.dropped}</div>
+                  <div>A/V sync&nbsp;&nbsp;{engStats.avsync.toFixed(3)}s{engStats.bitrate > 0 ? ` · ${engStats.bitrate.toFixed(0)} kbps` : ""}</div>
+                </>
+              )}
               <div>Resolution&nbsp;&nbsp;{isMpv ? (dims ? `${dims.w}×${dims.h}` : "?") : `${videoRef.current?.videoWidth ?? "?"}×${videoRef.current?.videoHeight ?? "?"}`}</div>
               <div>Position&nbsp;&nbsp;&nbsp;&nbsp;{fmtTime(time)} / {fmtTime(dur)} ({Math.round(pct(time, dur))}%)</div>
               <div>Speed · Vol&nbsp;&nbsp;{rate}× · {Math.round(vol * 100)}%</div>

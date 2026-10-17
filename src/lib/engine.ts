@@ -118,7 +118,9 @@ export function onMpvEvent(h: Handler): () => void {
 export async function attachEngine(hwAccel: boolean): Promise<boolean> {
   if (!isTauri || state.kind !== "mpv") return false;
   const st = await invoke<{ active?: boolean }>("mpv_attach", {
-    hwdec: hwAccel ? "auto-safe" : "no",
+    // "auto" (not "auto-safe"): auto-safe bails to software decode on
+    // non-whitelisted GPUs/driver combos — the classic silent CPU burn.
+    hwdec: hwAccel ? "auto" : "no",
   });
   state = { ...state, active: !!st?.active };
   emit();

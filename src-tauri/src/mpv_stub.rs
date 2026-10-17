@@ -16,13 +16,31 @@ pub fn mpv_status() -> Status {
 }
 
 #[tauri::command]
-pub fn mpv_attach(_hwdec: Option<String>) -> Status {
+pub fn mpv_attach(_app: tauri::AppHandle, _hwdec: Option<String>) -> Status {
     mpv_status()
 }
 
 #[tauri::command]
-pub fn mpv_detach() -> bool {
+pub fn mpv_detach(_app: tauri::AppHandle) -> bool {
     false
+}
+
+/// On-demand engine stats (real impl in mpv.rs, windows).
+#[derive(Serialize)]
+pub struct EngineStats {
+    pub hwdec: String,
+    pub vo: String,
+    pub vf_fps: f64,
+    pub fps: f64,
+    pub dropped: u64,
+    pub audio: String,
+    pub avsync: f64,
+    pub bitrate: f64,
+}
+
+#[tauri::command]
+pub fn mpv_stats() -> Option<EngineStats> {
+    None
 }
 
 #[tauri::command]

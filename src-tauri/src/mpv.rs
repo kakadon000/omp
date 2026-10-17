@@ -538,8 +538,14 @@ pub fn mpv_attach(app: AppHandle, hwdec: Option<String>) -> Status {
         (a.set_option_string)(h, n_wid.as_ptr(), wid_str.as_ptr());
         for (k, v) in [
             ("vo", "gpu-next,gpu"),
-            ("hwdec", hwdec.as_deref().unwrap_or("auto-safe")),
+            // "auto-safe" refuses hwdec on non-whitelisted drivers → silent
+            // software decode → CPU burn. "auto" still falls back to SW when
+            // genuinely unsupported, but takes the GPU path far more often.
+            ("hwdec", hwdec.as_deref().unwrap_or("auto")),
             ("hwdec-codecs", "all"),
+            // software-decode fast paths (no-ops when hardware decode engages)
+            ("vd-lavc-fast", "yes"),
+            ("vd-lavc-skiploopfilter", "nonref"),
             ("osc", "no"),
             ("osd-level", "0"),
             ("input-default-bindings", "no"),
@@ -577,13 +583,57 @@ pub fn mpv_attach(app: AppHandle, hwdec: Option<String>) -> Status {
         let mut guard = MPV.lock().unwrap();
         *guard = Some(Instance { h: SendPtr(h), hwnd, shown: false, stop, joined: Some(thread) });
         drop(guard);
+
+        // v0.5.0 CPU fix — now that the surface is genuinely attached:
+        // strip the DWM material (Mica/Acrylic) while video plays under the
+        // transparent webview. Blur-behind over 60fps video was forcing a
+        // full-window blur recomposition every single frame. Restored on
+        // mpv_detach. (Only on success — a failed attach keeps the glass.)
+        crate::set_playback_effects(&app, true);
     }
     mpv_status()
 }
 
 #[tauri::command]
-pub fn mpv_detach() -> bool {
+pub fn mpv_detach(app: AppHandle) -> bool {
+    // v0.5.0 CPU fix mirror: bring the Mica/Acrylic glass back for the UI
+    crate::set_playback_effects(&app, false);
     detach_impl()
+}
+
+/// On-demand engine stats for the "Stats for nerds" overlay.
+/// Read only while the overlay is open — zero polling cost when closed.
+#[derive(Serialize)]
+pub struct EngineStats {
+    pub hwdec: String,      // "d3d11va", "nvdec", ... or "no"/"" for software
+    pub vo: String,         // active video output driver
+    pub vf_fps: f64,        // estimated rendering fps
+    pub fps: f64,           // container fps
+    pub dropped: u64,       // dropped frame count
+    pub audio: String,      // active audio device shorthand
+    pub avsync: f64,
+    pub bitrate: f64,       // video bitrate kbps
+}
+
+#[tauri::command]
+pub fn mpv_stats() -> Option<EngineStats> {
+    let s = with_instance(|inst, a| unsafe {
+        let h = inst.h.0;
+        let prop = |name: &str| -> String {
+            get_prop_string(a, h, name).unwrap_or_default()
+        };
+        EngineStats {
+            hwdec: prop("hwdec-current"),
+            vo: prop("current-vo"),
+            vf_fps: prop("estimated-vf-fps").parse().unwrap_or(0.0),
+            fps: prop("container-fps").parse().unwrap_or(0.0),
+            dropped: prop("dropped-frame-count").parse().unwrap_or(0),
+            audio: prop("current-ao"),
+            avsync: prop("avsync").parse().unwrap_or(0.0),
+            bitrate: prop("video-bitrate").parse().unwrap_or(0.0),
+        }
+    });
+    s
 }
 
 fn detach_impl() -> bool {
