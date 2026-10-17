@@ -35,6 +35,7 @@ const SWP_NOMOVE: u32 = 0x0002;
 const SWP_NOACTIVATE: u32 = 0x0010;
 const SWP_NOZORDER: u32 = 0x0004;
 const SW_SHOW: i32 = 5;
+const SW_HIDE: i32 = 0;
 const HWND_BOTTOM: HWND = 1;
 
 #[repr(C)]

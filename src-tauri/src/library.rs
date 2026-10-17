@@ -788,17 +788,18 @@ pub fn playlists_all(state: State<'_, LibraryState>) -> Vec<PlaylistInfo> {
                      GROUP BY p.id, p.name ORDER BY p.created_at DESC",
                 )
                 .ok()?;
-            s.query_map([], |r| {
-                Ok(PlaylistInfo {
-                    id: r.get(0)?,
-                    name: r.get(1)?,
-                    trackCount: r.get(2)?,
+            let rows: Vec<PlaylistInfo> = s
+                .query_map([], |r| {
+                    Ok(PlaylistInfo {
+                        id: r.get(0)?,
+                        name: r.get(1)?,
+                        trackCount: r.get(2)?,
+                    })
                 })
-            })
-            .ok()?
-            .filter_map(Result::ok)
-            .collect::<Vec<_>>()
-            .into()
+                .ok()?
+                .filter_map(Result::ok)
+                .collect();
+            Some(rows)
         })
         .unwrap_or_default()
 }
@@ -889,11 +890,12 @@ pub fn playlist_items(state: State<'_, LibraryState>, id: i64) -> Vec<MediaItem>
                  FROM playlist_items pi JOIN media m ON m.path = pi.path \
                  WHERE pi.playlist_id = ?1 ORDER BY pi.position ASC LIMIT 2000";
             let mut s = db.prepare(sql).ok()?;
-            s.query_map(params![id], row_to_item)
+            let rows: Vec<MediaItem> = s
+                .query_map(params![id], row_to_item)
                 .ok()?
                 .filter_map(Result::ok)
-                .collect::<Vec<_>>()
-                .into()
+                .collect();
+            Some(rows)
         })
         .unwrap_or_default()
 }
