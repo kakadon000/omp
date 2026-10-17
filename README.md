@@ -27,6 +27,30 @@ distinctive, not into reinventing video decoding.
 - **Theme Studio** — dark/light/system, five tasteful accents, adjustable
   transparency, Reduced Effects for low-end PCs.
 
+## What's new in v0.2.0 — VLC-grade control
+
+- **Fixed: dead timeline** — the seek bar now uses a proper scrub state
+  machine (drag, click, keyboard — no more snap-back), plus hover time
+  preview and a buffered-progress bar. Sources served without HTTP Range
+  support (which made Chromium collapse the seekable range to zero and
+  reject every seek) are auto-upgraded to a fully seekable blob copy.
+- **Fixed: ~30% CPU during playback** — the boot splash now unmounts
+  instead of running an invisible infinite animation forever, and
+  backdrop-blur was removed from layers rendered on top of video frames.
+- **Right-click everywhere** — full VLC-style context menu on the video
+  (speed, jump, aspect, zoom, rotate, adjustments, delays, loop, snapshot,
+  stats…), plus menus on the queue, Home cards, history, music and photos.
+- **Cinema sidebar** — the navigation sidebar hides itself while video
+  plays and peeks back from the left edge (toggle in Settings).
+- **30+ hotkeys** — Space/K, J/L, 0–9, Ctrl+G, B (A-B loop), T (snapshot),
+  Z (rotate), +/- zoom, [ ] speed, G/H & Alt+J/K delays, Q, I, Shift+L, R…
+  Press <kbd>?</kbd> anywhere for the full map.
+- **VLC staples** — A-B loop, loop off/all/one, shuffle, snapshot to PNG,
+  aspect ratio & zoom & rotation, brightness/contrast/saturation/hue,
+  subtitle & audio delay, volume boost to 200%, stats-for-nerds overlay,
+  jump-to-time, real queue management (reorder/remove/add from anywhere),
+  auto-hiding fullscreen controls and VLC-style OSD feedback.
+
 ## Tech stack
 
 | Component        | Technology                     |

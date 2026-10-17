@@ -89,6 +89,14 @@ export function Settings({ settings, update }: { settings: Settings; update: (p:
           </div>
           <Switch on={settings.sidebarRail} onChange={(v) => update({ sidebarRail: v })} />
         </div>
+        <div className="row">
+          <span className="icon-btn"><Icon name="film" /></span>
+          <div className="row-main">
+            <div className="row-title">Auto-hide sidebar during video playback</div>
+            <div className="row-desc">Cinema mode — hover the left edge to peek it back</div>
+          </div>
+          <Switch on={settings.autoHideSidebar !== false} onChange={(v) => update({ autoHideSidebar: v })} />
+        </div>
       </div>
 
       <div className="section-label">Playback</div>

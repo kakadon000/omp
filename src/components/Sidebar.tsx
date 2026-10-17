@@ -15,9 +15,13 @@ const ITEMS: { r: Route; icon: string; label: string; sep?: boolean }[] = [
   { r: "settings", icon: "gear", label: "Settings" },
 ];
 
-export function Sidebar({ rail }: { rail: boolean }) {
+export function Sidebar({ rail, peek, onPeekEnd }: { rail: boolean; peek?: boolean; onPeekEnd?: () => void }) {
   return (
-    <nav className={`sidebar ${rail ? "rail" : ""}`} aria-label="Main navigation">
+    <nav
+      className={`sidebar ${rail ? "rail" : ""} ${peek ? "peek" : ""}`}
+      aria-label="Main navigation"
+      onMouseLeave={peek ? onPeekEnd : undefined}
+    >
       {ITEMS.map((it) => (
         <NavItem key={it.r} {...it} rail={rail} />
       ))}

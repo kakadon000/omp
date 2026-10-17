@@ -1,6 +1,7 @@
 import { useSyncExternalStore, useState } from "react";
 import { Icon } from "../components/Icon";
 import { toast } from "../components/Toast";
+import { openContextMenu } from "../components/ContextMenu";
 import { TRACKS, RADIO } from "../lib/data";
 import {
   nowPlaying, audio, playTrackById, nextTrack, togglePlay, seekTo,
@@ -59,7 +60,21 @@ export function Music({ query }: { query: string }) {
           <div className="section-label" style={{ marginTop: 26 }}>All tracks</div>
           <div className="track-list">
             {tracks.map((t, i) => (
-              <div key={t.id} className={`track-item ${np.trackId === t.id ? "on" : ""}`} onClick={() => playTrackById(t.id)}>
+              <div
+                key={t.id}
+                className={`track-item ${np.trackId === t.id ? "on" : ""}`}
+                onClick={() => playTrackById(t.id)}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  openContextMenu(e.clientX, e.clientY, [
+                    { label: "Play", icon: "play", onClick: () => playTrackById(t.id) },
+                    { sep: true },
+                    { label: "Copy title", icon: "type", onClick: () => { void navigator.clipboard?.writeText(t.title); toast("Copied", "ok"); } },
+                    { label: "Copy artist — title", icon: "type", onClick: () => { void navigator.clipboard?.writeText(`${t.artist} — ${t.title}`); toast("Copied", "ok"); } },
+                  ], t.title);
+                }}
+              >
                 <span className="track-num">
                   {np.trackId === t.id && np.playing ? (
                     <span className="track-eq"><i /><i /><i /></span>
@@ -116,7 +131,16 @@ export function Music({ query }: { query: string }) {
 export function NowPlayingBar() {
   const np = useNowPlaying();
   const current = TRACKS.find((t) => t.id === np.trackId);
+  const [scrub, setScrub] = useState<number | null>(null);
   if (!current) return null;
+
+  const displayPct = scrub !== null ? scrub / 10 : pct(np.time, np.dur);
+  const commit = () => {
+    setScrub((cur) => {
+      if (cur !== null && np.dur > 0) seekTo((cur / 1000) * np.dur);
+      return null;
+    });
+  };
 
   return (
     <div className="np-bar">
@@ -126,9 +150,12 @@ export function NowPlayingBar() {
         <div className="np-artist">{current.artist} — {current.album}</div>
         <input
           type="range" className="slider thin np-seek" min={0} max={1000}
-          value={Math.round(pct(np.time, np.dur) * 10)}
-          style={{ ["--fill" as string]: `${pct(np.time, np.dur)}%` }}
-          onChange={(e) => seekTo((Number(e.target.value) / 1000) * np.dur)}
+          value={Math.round(displayPct * 10)}
+          style={{ ["--fill" as string]: `${displayPct}%` }}
+          onChange={(e) => setScrub(Number(e.target.value))}
+          onPointerUp={commit}
+          onKeyUp={commit}
+          onBlur={commit}
           aria-label="Seek music"
         />
       </div>

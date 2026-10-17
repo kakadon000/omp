@@ -2,7 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { TitleBar } from "./components/TitleBar";
 import { Sidebar } from "./components/Sidebar";
 import { Toasts } from "./components/Toast";
-import { useRoute } from "./lib/router";
+import { ContextMenuHost } from "./components/ContextMenu";
+import { ShortcutsModal, SHORTCUT_GROUPS } from "./components/ShortcutsModal";
+import { useRoute, navigate, type Route } from "./lib/router";
 import { getShellInfo, invoke, isTauri } from "./lib/tauri";
 import {
   loadSettings, saveSettings, applySettings,
@@ -19,11 +21,20 @@ import { Library } from "./screens/Library";
 import { Themes } from "./screens/Themes";
 import { Settings as SettingsScreen } from "./screens/Settings";
 
+const ROUTE_ORDER: Route[] = [
+  "home", "player", "music", "gallery", "editor",
+  "online", "widget", "library", "themes", "settings",
+];
+
 export default function App() {
   const route = useRoute();
   const [settings, setSettings] = useState<Settings>(loadSettings);
   const [query, setQuery] = useState("");
   const [booted, setBooted] = useState(false);
+  const [bootGone, setBootGone] = useState(false);
+  const [vidPlaying, setVidPlaying] = useState(false);
+  const [peek, setPeek] = useState(false);
+  const [keysOpen, setKeysOpen] = useState(false);
 
   // boot: apply settings, ask the shell for OS info, close native splash
   useEffect(() => {
@@ -35,8 +46,50 @@ export default function App() {
       setBooted(true);
       if (isTauri) invoke("close_splash");
     }, 900);
-    return () => clearTimeout(t);
+    // fully unmount the boot overlay shortly after the fade — an invisible
+    // overlay with an infinite loading animation burns CPU forever
+    const t2 = setTimeout(() => setBootGone(true), 1500);
+    return () => { clearTimeout(t); clearTimeout(t2); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // player tells us when video is actually playing → auto-hide the sidebar
+  useEffect(() => {
+    const on = (e: Event) => setVidPlaying(!!(e as CustomEvent<{ playing?: boolean }>).detail?.playing);
+    window.addEventListener("omp:video-state", on);
+    return () => window.removeEventListener("omp:video-state", on);
+  }, []);
+
+  // app-wide hotkeys: ? shortcuts · Ctrl+K search · Alt+1..0 screens
+  useEffect(() => {
+    const on = (e: KeyboardEvent) => {
+      const t = e.target as HTMLElement | null;
+      const typing = !!(t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable));
+      if (e.key === "?" && !typing) {
+        e.preventDefault();
+        setKeysOpen((o) => !o);
+        return;
+      }
+      if (typing) return;
+      if ((e.ctrlKey || e.metaKey) && (e.key === "k" || e.key === "K")) {
+        e.preventDefault();
+        (document.querySelector(".search-box input") as HTMLInputElement | null)?.focus();
+        return;
+      }
+      if (e.altKey && /^[0-9]$/.test(e.key)) {
+        e.preventDefault();
+        const idx = Number(e.key) === 0 ? 9 : Number(e.key) - 1;
+        navigate(ROUTE_ORDER[idx]);
+        return;
+      }
+    };
+    const onShowKeys = () => setKeysOpen(true);
+    window.addEventListener("keydown", on);
+    window.addEventListener("omp:show-keys", onShowKeys);
+    return () => {
+      window.removeEventListener("keydown", on);
+      window.removeEventListener("omp:show-keys", onShowKeys);
+    };
   }, []);
 
   const update = (patch: Partial<Settings>) => {
@@ -53,6 +106,8 @@ export default function App() {
 
   const toggleEffects = () =>
     update({ effects: document.documentElement.classList.contains("reduced") ? "full" : "reduced" });
+
+  const hideSidebar = route === "player" && vidPlaying && settings.autoHideSidebar !== false;
 
   const screen = useMemo(() => {
     switch (route) {
@@ -72,7 +127,16 @@ export default function App() {
 
   return (
     <>
-      <div className="shell">
+      {/* VLC-style: the native menu is ours — right-click anywhere for context
+          actions (inputs keep their native menu for copy/paste) */}
+      <div
+        className={`shell ${hideSidebar ? "video-playing" : ""}`}
+        onContextMenu={(e) => {
+          const t = e.target as HTMLElement;
+          if (t.closest("input, textarea, [contenteditable=''], [contenteditable='true']")) return;
+          e.preventDefault();
+        }}
+      >
         <TitleBar
           query={query}
           onQuery={setQuery}
@@ -82,7 +146,18 @@ export default function App() {
           effectsReduced={document.documentElement.classList.contains("reduced")}
         />
         <div className="shell-body">
-          <Sidebar rail={settings.sidebarRail} />
+          {hideSidebar && (
+            <div
+              className="sidebar-peek"
+              onMouseEnter={() => setPeek(true)}
+              aria-hidden="true"
+            />
+          )}
+          <Sidebar
+            rail={settings.sidebarRail}
+            peek={hideSidebar && peek}
+            onPeekEnd={() => setPeek(false)}
+          />
           <main className={`main ${route === "player" ? "no-pad" : ""}`} style={{ position: "relative" }}>
             {screen}
           </main>
@@ -91,16 +166,20 @@ export default function App() {
 
       {route !== "player" && <NowPlayingBar />}
       <Toasts />
+      <ContextMenuHost />
+      {keysOpen && <ShortcutsModal groups={SHORTCUT_GROUPS} onClose={() => setKeysOpen(false)} />}
 
       {/* boot splash (native app uses the real splash window; web shows this) */}
-      <div className={`boot ${booted ? "done" : ""}`} aria-hidden={booted}>
-        <div className="card">
-          <img src="./icon-512.png" alt="OMP" />
-          <div className="word">OMP</div>
-          <div className="tag">Every Format. One Player. Open to All.</div>
-          <div className="bar"><i /></div>
+      {!bootGone && (
+        <div className={`boot ${booted ? "done" : ""}`} aria-hidden={booted}>
+          <div className="card">
+            <img src="./icon-512.png" alt="OMP" />
+            <div className="word">OMP</div>
+            <div className="tag">Every Format. One Player. Open to All.</div>
+            <div className="bar"><i /></div>
+          </div>
         </div>
-      </div>
+      )}
     </>
   );
 }

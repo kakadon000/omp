@@ -144,7 +144,10 @@
 .slider { -webkit-appearance: none; appearance: none; width: 100%; height: 20px; background: transparent; cursor: pointer; }
 .slider::-webkit-slider-runnable-track {
   height: 4px; border-radius: 99px;
-  background: linear-gradient(to right, var(--accent) var(--fill, 0%), var(--surface-3) var(--fill, 0%));
+  background: linear-gradient(to right,
+    var(--accent) 0 var(--fill, 0%),
+    rgba(128, 130, 148, 0.45) var(--fill, 0%) var(--buffered, var(--fill, 0%)),
+    var(--surface-3) var(--buffered, var(--fill, 0%)));
 }
 .slider::-webkit-slider-thumb {
   -webkit-appearance: none; appearance: none;
@@ -189,6 +192,55 @@
 .menu-item svg { width: 15px; height: 15px; flex: none; }
 .menu-item .grow { flex: 1; }
 .menu-sep { height: 1px; background: var(--stroke); margin: 5px 8px; }
+
+/* ---------- global right-click menu ---------- */
+.ctx-layer {
+  position: fixed; inset: 0; z-index: 150;
+  pointer-events: none;
+}
+.ctx-menu {
+  position: absolute; min-width: 214px; max-width: 300px;
+  padding: 5px;
+  background: var(--bg-solid);
+  border: 1px solid var(--stroke-2);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  pointer-events: auto;
+  animation: menu-in 0.14s var(--ease);
+  user-select: none;
+}
+.ctx-wrap { position: relative; }
+.ctx-menu.sub { left: calc(100% - 4px); top: -5px; min-width: 190px; }
+.ctx-title {
+  padding: 7px 10px 6px; font-size: 11px; font-weight: 600; color: var(--text-3);
+  letter-spacing: 0.03em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.ctx-item {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  padding: 7px 10px; border-radius: 6px;
+  font-size: 13px; color: var(--text); text-align: left;
+  transition: background 0.1s; white-space: nowrap;
+}
+.ctx-item:hover:not(:disabled) { background: var(--surface-2); }
+.ctx-item:disabled { color: var(--text-3); cursor: default; opacity: 0.55; }
+.ctx-item.danger { color: var(--danger); }
+.ctx-item.danger:hover { background: rgba(255, 90, 90, 0.1); }
+.ctx-ico { width: 16px; height: 16px; flex: none; display: inline-flex; align-items: center; justify-content: center; }
+.ctx-ico svg { width: 15px; height: 15px; }
+.ctx-hint { font-size: 11px; color: var(--text-3); margin-left: auto; padding-left: 18px; }
+.ctx-sep { height: 1px; background: var(--stroke); margin: 5px 8px; }
+
+/* ---------- shortcut map modal ---------- */
+.keys-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 4px 22px; }
+.keys-gtitle {
+  font-size: 11.5px; font-weight: 600; color: var(--accent);
+  letter-spacing: 0.05em; text-transform: uppercase;
+  margin: 12px 0 4px;
+}
+.keys-row { display: flex; align-items: center; gap: 12px; padding: 4px 0; }
+.keys-kbd { display: flex; gap: 3px; flex: none; min-width: 84px; }
+.keys-desc { font-size: 12.5px; color: var(--text-2); }
+.keys-note { margin-right: auto; font-size: 12px; color: var(--text-3); display: flex; align-items: center; gap: 5px; }
 
 /* ---------- modal / sheet ---------- */
 .overlay {

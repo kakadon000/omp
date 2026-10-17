@@ -14,6 +14,7 @@ export type Settings = {
   defaultSpeed: number;
   seekStep: number;
   sidebarRail: boolean;
+  autoHideSidebar: boolean;
 };
 
 const DEFAULTS: Settings = {
@@ -25,6 +26,7 @@ const DEFAULTS: Settings = {
   defaultSpeed: 1,
   seekStep: 10,
   sidebarRail: false,
+  autoHideSidebar: true,
 };
 
 const KEY = "omp.settings";
@@ -92,20 +94,24 @@ export const nowPlaying = makeStore<NowPlaying>({
 export const audio: HTMLAudioElement | null =
   typeof Audio !== "undefined" ? new Audio() : null;
 
+let audioSrc = ""; // original track src, for the seekability fixer
 if (audio) {
   audio.addEventListener("timeupdate", () =>
     nowPlaying.set({ time: audio.currentTime, dur: audio.duration || 0 })
   );
   audio.addEventListener("ended", () => nowPlaying.set({ playing: false, time: 0 }));
-  audio.addEventListener("loadedmetadata", () =>
-    nowPlaying.set({ dur: audio.duration || 0 })
-  );
+  audio.addEventListener("loadedmetadata", () => {
+    nowPlaying.set({ dur: audio.duration || 0 });
+    // small files served without Range support can't seek — swap in a blob
+    void ensureSeekable(audio, audioSrc);
+  });
 }
 
 export function playTrack(src: string, trackId: string) {
   if (!audio) return;
   if (nowPlaying.get().trackId !== trackId) {
     audio.src = src;
+    audioSrc = src;
     nowPlaying.set({ trackId, time: 0 });
   }
   audio.play().catch(() => {});
@@ -171,6 +177,8 @@ if (audio) {
 }
 
 /* ------------------------- external file (open with…) ------------------------- */
+import { ensureSeekable } from "./media";
+
 export type CustomMedia = { name: string; url: string };
 export const customMedia = makeStore<CustomMedia>({ name: "", url: "" });
 
@@ -213,4 +221,10 @@ export function pushHistory(item: HistItem) {
 
 export function clearHistory() {
   localStorage.removeItem(HIST_KEY);
+}
+
+export function removeHistory(id: string, at: number) {
+  const h = loadHistory().filter((x) => !(x.id === id && x.at === at));
+  localStorage.setItem(HIST_KEY, JSON.stringify(h));
+  return h;
 }

@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { Icon } from "../components/Icon";
 import { toast } from "../components/Toast";
+import { openContextMenu } from "../components/ContextMenu";
 import { navigate } from "../lib/router";
-import { loadHistory, clearHistory, type HistItem } from "../lib/store";
+import { loadHistory, clearHistory, removeHistory, type HistItem } from "../lib/store";
 import { fmtClock } from "../lib/format";
 
 export function Library({ query }: { query: string }) {
@@ -12,6 +13,26 @@ export function Library({ query }: { query: string }) {
   const items = hist.filter((h) => !q || h.name.toLowerCase().includes(q));
 
   const kindIcon = (k: HistItem["kind"]) => (k === "video" ? "film" : k === "music" ? "music" : "image");
+
+  const histMenu = (e: React.MouseEvent, h: HistItem) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openContextMenu(e.clientX, e.clientY, [
+      {
+        label: "Open", icon: "play",
+        onClick: () => navigate(h.kind === "music" ? "music" : h.kind === "image" ? "gallery" : "player"),
+      },
+      { sep: true },
+      {
+        label: "Remove from history", icon: "trash", danger: true,
+        onClick: () => { setHist(removeHistory(h.id, h.at)); toast("Removed from history", "ok"); },
+      },
+      {
+        label: "Clear all history", icon: "trash", danger: true,
+        onClick: () => { clearHistory(); setHist([]); toast("History cleared", "ok"); },
+      },
+    ], h.name);
+  };
 
   return (
     <div>
@@ -35,6 +56,7 @@ export function Library({ query }: { query: string }) {
               key={`${h.id}-${h.at}`}
               className="hist-row"
               onClick={() => navigate(h.kind === "music" ? "music" : h.kind === "image" ? "gallery" : "player")}
+              onContextMenu={(e) => histMenu(e, h)}
             >
               <div className="hist-thumb">
                 {h.thumb ? <img src={h.thumb} alt="" loading="lazy" /> : <Icon name={kindIcon(h.kind)} />}

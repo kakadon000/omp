@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { Icon } from "../components/Icon";
 import { toast } from "../components/Toast";
+import { openContextMenu } from "../components/ContextMenu";
 import { navigate } from "../lib/router";
 import { openMediaFile, APP_VERSION } from "../lib/tauri";
-import { VIDEOS, IMAGES, TRACKS } from "../lib/data";
+import { VIDEOS, IMAGES, TRACKS, type VideoItem } from "../lib/data";
 import { loadProgress, saveProgress, pushHistory, customMedia, type CustomMedia } from "../lib/store";
+import { videoQueue } from "../lib/videoQueue";
 import { fmtTime, pct } from "../lib/format";
 import { useSyncExternalStore } from "react";
 
@@ -38,6 +40,34 @@ export function Home({ query }: { query: string }) {
 
   const filtered = (names: string[]) =>
     query ? names.some((n) => n.toLowerCase().includes(query.toLowerCase())) : true;
+
+  const playVideo = (id: string) => {
+    navigate("player");
+    window.dispatchEvent(new CustomEvent("omp:play-video", { detail: id }));
+  };
+
+  const addToQueue = (v: VideoItem) => {
+    videoQueue.add(v);
+    toast(`Added "${v.title}" to the queue`, "ok");
+  };
+
+  const cardMenu = (e: React.MouseEvent, m: { kind?: string; id: string; title?: string; name?: string }) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const label = m.title ?? m.name ?? "media";
+    const isVideo = m.kind === "video" || VIDEOS.some((v) => v.id === m.id);
+    openContextMenu(e.clientX, e.clientY, [
+      ...(isVideo ? [
+        { label: "Play now", icon: "play", onClick: () => playVideo(m.id) },
+        { label: "Add to queue", icon: "plus", onClick: () => { const v = VIDEOS.find((x) => x.id === m.id); if (v) addToQueue(v); } },
+        { label: "Add as next in queue", icon: "list", onClick: () => { const v = VIDEOS.find((x) => x.id === m.id); if (v) { videoQueue.addNext(v); toast(`"${v.title}" plays next`, "ok"); } } },
+      ] : [
+        { label: "Open in Gallery", icon: "image", onClick: () => navigate("gallery") },
+      ]),
+      { sep: true as const },
+      { label: "Copy title", icon: "type", onClick: () => { void navigator.clipboard?.writeText(label); toast("Copied", "ok"); } },
+    ], label);
+  };
 
   const recentMedia = [
     ...VIDEOS.map((v) => ({ ...v })),
@@ -91,7 +121,8 @@ export function Home({ query }: { query: string }) {
                     <div
                       key={v.id}
                       className="card hover media-card"
-                      onClick={() => { navigate("player"); window.dispatchEvent(new CustomEvent("omp:play-video", { detail: v.id })); }}
+                      onClick={() => playVideo(v.id)}
+                      onContextMenu={(e) => cardMenu(e, { kind: "video", id: v.id, title: v.title })}
                     >
                       <div className="media-thumb">
                         <img src={v.poster} alt="" loading="lazy" />
@@ -114,13 +145,10 @@ export function Home({ query }: { query: string }) {
                 key={m.id}
                 className="card hover media-card"
                 onClick={() => {
-                  if (m.kind === "video") {
-                    navigate("player");
-                    window.dispatchEvent(new CustomEvent("omp:play-video", { detail: m.id }));
-                  } else {
-                    navigate("gallery");
-                  }
+                  if (m.kind === "video") playVideo(m.id);
+                  else navigate("gallery");
                 }}
+                onContextMenu={(e) => cardMenu(e, { kind: m.kind, id: m.id, title: m.title, name: typeof m.title === "string" ? undefined : String((m as { name?: string }).name ?? "") || undefined })}
               >
                 <div className="media-thumb">
                   <img src={m.poster} alt="" loading="lazy" />

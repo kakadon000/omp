@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../components/Icon";
 import { toast } from "../components/Toast";
+import { openContextMenu } from "../components/ContextMenu";
 import { IMAGES } from "../lib/data";
 import { pushHistory } from "../lib/store";
 import { openImageFiles } from "../lib/tauri";
@@ -41,6 +42,17 @@ export function Gallery({ query }: { query: string }) {
     });
   };
 
+  const imgMenu = (e: React.MouseEvent, img: { id: string; name: string }) => {
+    e.preventDefault();
+    e.stopPropagation();
+    openContextMenu(e.clientX, e.clientY, [
+      { label: "Open", icon: "image", onClick: () => setOpenId(img.id) },
+      { label: sel.has(img.id) ? "Deselect" : "Select", icon: "check", onClick: () => toggleSel(img.id) },
+      { sep: true },
+      { label: "Copy filename", icon: "type", onClick: () => { void navigator.clipboard?.writeText(img.name); toast("Filename copied", "ok"); } },
+    ], img.name);
+  };
+
   const deleteSelected = () => {
     if (sel.size === 0) return;
     toast(`${sel.size} item(s) removed from the demo library (demo only)`, "info");
@@ -75,6 +87,7 @@ export function Gallery({ query }: { query: string }) {
             key={img.id}
             className={`gal-item ${sel.has(img.id) ? "sel" : ""}`}
             onClick={() => setOpenId(img.id)}
+            onContextMenu={(e) => imgMenu(e, img)}
             role="button"
             tabIndex={0}
             onKeyDown={(e) => e.key === "Enter" && setOpenId(img.id)}
