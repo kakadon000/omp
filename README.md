@@ -27,6 +27,31 @@ distinctive, not into reinventing video decoding.
 - **Theme Studio** — dark/light/system, five tasteful accents, adjustable
   transparency, Reduced Effects for low-end PCs.
 
+## What's new in v0.6.0 — Phase 3: Music & widgets
+
+- **The real music library** — every audio file OMP scans gets its embedded
+  album art extracted to a JPEG (mpv decodes the cover track exactly like a
+  video thumbnail), and ID3/FLAC/Vorbis tags (artist · album · genre) land in
+  SQLite. The Music screen groups albums with real covers, searches across
+  tags, and remembers per-track progress and play counts.
+- **SQLite playlists** — create playlists, add tracks from any track's
+  right-click menu, play or delete them from the Music screen. Stored in the
+  same library database, resolved live against your files.
+- **Internet radio** — five built-in stations (SomaFM, Radio Paradise), one
+  click to play via the native engine, **live "now playing" titles** streamed
+  from the station's ICY metadata, and add-your-own stream URL (right-click a
+  custom station to remove it).
+- **A real desktop widget** — a frameless, translucent, always-on-top second
+  window: artwork, title, seek bar, transport controls; expands to show the
+  queue and volume. Drag it anywhere by its header.
+- **Background playback** — close the main window while music plays and OMP
+  keeps going: the window hides, the widget pops up, the music never stops.
+  Quit from the widget menu when you're done (toggle in Settings →
+  Background playback).
+- **Engine as a global service** — audio sessions survive navigation (and
+  window close); opening a video politely offers "Stop & play video" instead
+  of silently hijacking your music.
+
 ## What's new in v0.5.0 — the ultra-light engine fix (CPU 70% → done)
 
 Three stacked causes were burning CPU during playback, and all three are now

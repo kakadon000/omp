@@ -15,6 +15,7 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, "index.html"),
         splash: resolve(__dirname, "splash.html"),
+        widget: resolve(__dirname, "widget.html"),
       },
     },
   },

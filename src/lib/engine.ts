@@ -121,6 +121,8 @@ export async function attachEngine(hwAccel: boolean): Promise<boolean> {
     // "auto" (not "auto-safe"): auto-safe bails to software decode on
     // non-whitelisted GPUs/driver combos — the classic silent CPU burn.
     hwdec: hwAccel ? "auto" : "no",
+    // video sessions want the surface visible; audio sessions pass show:false
+    show: true,
   });
   state = { ...state, active: !!st?.active };
   emit();

@@ -16,7 +16,7 @@ pub fn mpv_status() -> Status {
 }
 
 #[tauri::command]
-pub fn mpv_attach(_app: tauri::AppHandle, _hwdec: Option<String>) -> Status {
+pub fn mpv_attach(_app: tauri::AppHandle, _hwdec: Option<String>, _show: Option<bool>) -> Status {
     mpv_status()
 }
 
@@ -36,6 +36,7 @@ pub struct EngineStats {
     pub audio: String,
     pub avsync: f64,
     pub bitrate: f64,
+    pub path: String,
 }
 
 #[tauri::command]
@@ -128,6 +129,11 @@ pub fn mpv_snapshot() -> Option<String> {
     None
 }
 
+/* Phase 3: audio-active probe (real impl in mpv.rs, windows). */
+pub(crate) fn is_audio_active() -> bool {
+    false
+}
+
 /* Phase 2 probe — headless libmpv metadata; real impl in mpv.rs (windows). */
 pub(crate) struct ProbeMeta {
     pub duration: f64,
@@ -136,10 +142,13 @@ pub(crate) struct ProbeMeta {
     pub video_codec: String,
     pub audio_codec: String,
     pub container: String,
+    pub artist: String,
+    pub album: String,
+    pub genre: String,
     pub thumb: bool,
 }
 
-pub(crate) fn probe_media(_path: &str, _thumb_dir: Option<&std::path::Path>) -> Option<ProbeMeta> {
+pub(crate) fn probe_media(_path: &str, _thumb_dir: Option<&std::path::Path>, _audio: bool) -> Option<ProbeMeta> {
     None
 }
 

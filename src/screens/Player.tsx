@@ -11,6 +11,7 @@ import { invoke, isTauri, openMediaFile, openSubtitleFile } from "../lib/tauri";
 import { videoQueue, type RepeatMode } from "../lib/videoQueue";
 import { robustSeek } from "../lib/media";
 import { engineStore, onMpvEvent, attachEngine, detachEngine, parseTracks } from "../lib/engine";
+import { audioStore, stopSession, type AudioState } from "../lib/audio";
 import type { VideoItem } from "../lib/data";
 
 type MenuKind = "speed" | "subs" | "audio" | null;
@@ -78,6 +79,7 @@ export function Player({ settings }: { settings: Settings }) {
     hwdec: string; vo: string; vf_fps: number; fps: number; dropped: number; avsync: number; bitrate: number;
   } | null>(null);
   const [jumpOpen, setJumpOpen] = useState(false);
+  const [takeover, setTakeover] = useState(0);
   const [queueOpen, setQueueOpen] = useState(true);
   const [osd, setOsd] = useState<{ id: number; msg: string } | null>(null);
   const [tracks, setTracks] = useState<{ id: number; type: string; title?: string; lang?: string; codec?: string; default?: boolean }[]>([]);
@@ -130,9 +132,13 @@ export function Player({ settings }: { settings: Settings }) {
 
   /* ---------------- native mpv engine lifecycle ---------------- */
 
-  // attach the video surface + detach on unmount / engine switch
+  // attach the video surface + detach on unmount / engine switch.
+  // Phase 3: when an AUDIO session owns the engine, skip attaching — the
+  // engine is already alive (hidden surface); Player becomes a view over it
+  // and can take over by pressing play.
   useEffect(() => {
     if (!isTauri || !isMpv) return;
+    if (audioStore.get().track) return;
     let dead = false;
     void (async () => {
       const ok = await attachEngine(settings.hwAccel);
@@ -172,9 +178,12 @@ export function Player({ settings }: { settings: Settings }) {
     };
   }, [isMpv]);
 
-  // mpv mode: load the file (with resume) whenever the source changes
+  // mpv mode: load the file (with resume) whenever the source changes.
+  // Gate: don't hijack a live audio session — the idle-stage notice offers
+  // "Stop music" instead. External files (custom.url) are explicit intent.
   useEffect(() => {
     if (!isMpv || !loadSrc) return;
+    if (!custom.url && audioStore.get().track) return;
     if (!custom.url) {
       const p = loadProgress()[vid.id];
       const start = p && p.t > 3 && pct(p.t, p.d) < 97 ? p.t : 0;
@@ -188,7 +197,7 @@ export function Player({ settings }: { settings: Settings }) {
       void invoke("mpv_load", { source: loadSrc, start });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isMpv, loadSrc]);
+  }, [isMpv, loadSrc, takeover]);
 
   // mpv mode: engine events → the same state the web controls bind to
   useEffect(() => {
@@ -248,11 +257,13 @@ export function Player({ settings }: { settings: Settings }) {
   }, [isMpv, custom.url, dur, queue.repeat, vid.id]);
 
   // html.mpv-live: every layer over the stage turns transparent so the native
-  // surface (rendering BELOW the webview) shows through
+  // surface (rendering BELOW the webview) shows through. Phase 3: NOT while
+  // an audio session owns the engine — there is no video to show through.
+  const audioState = useSyncExternalStore(audioStore.sub, audioStore.get as () => AudioState);
   useEffect(() => {
-    document.documentElement.classList.toggle("mpv-live", isMpv);
+    document.documentElement.classList.toggle("mpv-live", isMpv && !audioState.track);
     return () => document.documentElement.classList.remove("mpv-live");
-  }, [isMpv]);
+  }, [isMpv, audioState.track]);
 
   // Stats for nerds — demand-driven: the 1s engine probe runs ONLY while the
   // overlay is open (spec: "no unnecessary timers"); closed = zero cost.
@@ -395,6 +406,12 @@ export function Player({ settings }: { settings: Settings }) {
 
   const togglePlay = useCallback(() => {
     if (isMpv) {
+      // an audio session owns the engine and no video is loaded → take over
+      if (audioStore.get().track) {
+        stopSession();
+        setTakeover((t) => t + 1);
+        return;
+      }
       void invoke("mpv_toggle_pause");
       return;
     }
@@ -1009,6 +1026,16 @@ export function Player({ settings }: { settings: Settings }) {
             <button className="stage-big-play" onClick={togglePlay} aria-label="Play">
               <Icon name="play" />
             </button>
+          )}
+
+          {audioState.track && !custom.url && (
+            <div className="audio-note">
+              <Icon name="music" size={15} />
+              <span><b>{audioState.track.title}</b> is playing in the background</span>
+              <button className="btn sm" onClick={() => { stopSession(); setTakeover((t) => t + 1); }}>
+                Stop &amp; play video
+              </button>
+            </div>
           )}
 
           <div className={`pc-title ${fsIdle && playing ? "hide" : ""}`}>

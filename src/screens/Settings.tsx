@@ -2,7 +2,7 @@ import { useState, useEffect, useSyncExternalStore } from "react";
 import { Icon } from "../components/Icon";
 import { toast } from "../components/Toast";
 import type { Settings } from "../lib/store";
-import { APP_VERSION, isTauri } from "../lib/tauri";
+import { APP_VERSION, isTauri, invoke } from "../lib/tauri";
 import { navigate } from "../lib/router";
 import { engineStore, initEngine } from "../lib/engine";
 import {
@@ -22,6 +22,7 @@ function Switch({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
 export function Settings({ settings, update }: { settings: Settings; update: (p: Partial<Settings>) => void }) {
   const [stats, setStats] = useState<LibraryStats | null>(null);
   const eng = useSyncExternalStore(engineStore.sub, engineStore.get);
+  const [background, setBackground] = useState(true);
 
   // live SQLite stats + scan status
   useEffect(() => {
@@ -164,6 +165,20 @@ export function Settings({ settings, update }: { settings: Settings; update: (p:
             <div className="row-desc">Use the GPU when available · software decoding fallback stays on</div>
           </div>
           <Switch on={settings.hwAccel} onChange={(v) => update({ hwAccel: v })} />
+        </div>
+        <div className="row">
+          <span className="icon-btn"><Icon name="music" /></span>
+          <div className="row-main">
+            <div className="row-title">Background playback</div>
+            <div className="row-desc">Closing OMP while music plays keeps it going — the desktop widget takes over</div>
+          </div>
+          <Switch
+            on={background}
+            onChange={(v) => {
+              setBackground(v);
+              void invoke("set_background_playback", { v });
+            }}
+          />
         </div>
         <div className="row">
           <span className="icon-btn"><Icon name="gauge" /></span>

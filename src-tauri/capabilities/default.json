@@ -1,8 +1,12 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "OMP default capability — main + splash windows",
-  "windows": ["main", "splashscreen"],
+  "description": "OMP capability \u2014 main + splash + desktop widget windows",
+  "windows": [
+    "main",
+    "splashscreen",
+    "widget"
+  ],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",

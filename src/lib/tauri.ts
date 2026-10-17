@@ -142,4 +142,31 @@ export async function getShellInfo(): Promise<{
   return info ?? fallback;
 }
 
-export const APP_VERSION = "0.4.0";
+export const APP_VERSION = "0.6.0";
+
+/** Emit a Tauri event to ALL windows (no-op on the web demo). */
+export async function tauriEmit(event: string, payload: unknown): Promise<void> {
+  if (!isTauri) return;
+  try {
+    const { emit } = await import("@tauri-apps/api/event");
+    await emit(event, payload);
+  } catch (e) {
+    console.warn("emit failed:", event, e);
+  }
+}
+
+/** Listen to a Tauri event in this window (no-op on the web demo). */
+export async function tauriListen<T = unknown>(
+  event: string,
+  handler: (payload: T) => void
+): Promise<() => void> {
+  if (!isTauri) return () => {};
+  try {
+    const { listen } = await import("@tauri-apps/api/event");
+    const un = await listen<T>(event, (e) => handler(e.payload));
+    return un;
+  } catch (e) {
+    console.warn("listen failed:", event, e);
+    return () => {};
+  }
+}

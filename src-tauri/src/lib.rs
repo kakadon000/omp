@@ -4,6 +4,12 @@
 
 use tauri::{AppHandle, Manager};
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Phase 3: when music is playing, the main window's ✕ hides it (music keeps
+/// going + the desktop widget appears) instead of quitting the whole app.
+static BACKGROUND_PLAYBACK: AtomicBool = AtomicBool::new(true);
+
 #[cfg(windows)]
 #[path = "mpv.rs"]
 mod mpv;
@@ -130,6 +136,80 @@ fn shell_info() -> serde_json::Value {
     }
 }
 
+/// Phase 3 — desktop widget (a real second window, alive while the main
+/// window is hidden, driven by the same omp://mpv events).
+#[tauri::command]
+fn widget_toggle(app: tauri::AppHandle) -> bool {
+    if let Some(w) = app.get_webview_window("widget") {
+        if w.is_visible().unwrap_or(false) {
+            let _ = w.hide();
+            return false;
+        }
+        let _ = w.show();
+        let _ = w.set_focus();
+        return true;
+    }
+    let widget = tauri::WebviewWindowBuilder::new(
+        &app,
+        "widget",
+        tauri::WebviewUrl::App("widget.html".into()),
+    )
+    .title("OMP — Now Playing")
+    .inner_size(340.0, 132.0)
+    .min_inner_size(300.0, 100.0)
+    .resizable(false)
+    .decorations(false)
+    .transparent(true)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .shadow(true)
+    .focused(false)
+    .visible(true);
+    match widget.build() {
+        Ok(_) => true,
+        Err(e) => {
+            eprintln!("OMP widget window: {e}");
+            false
+        }
+    }
+}
+
+/// Expanded ↔ mini widget size, applied from inside the widget UI.
+#[tauri::command]
+fn widget_set_expanded(app: tauri::AppHandle, expanded: bool) -> bool {
+    if let Some(w) = app.get_webview_window("widget") {
+        let (wt, ht) = if expanded { (340.0, 432.0) } else { (340.0, 132.0) };
+        let _ = w.set_size(tauri::LogicalSize::new(wt, ht));
+        return true;
+    }
+    false
+}
+
+/// Widget → bring the (possibly hidden) main window back.
+#[tauri::command]
+fn app_show_main(app: tauri::AppHandle) -> bool {
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+        return true;
+    }
+    false
+}
+
+/// Real quit — used by the widget menu. Releases the engine first.
+#[tauri::command]
+fn app_quit(app: tauri::AppHandle) {
+    mpv::shutdown_all();
+    app.exit(0);
+}
+
+/// Called from Settings: toggle the close-keeps-music behaviour.
+#[tauri::command]
+fn set_background_playback(v: bool) {
+    BACKGROUND_PLAYBACK.store(v, Ordering::Relaxed);
+}
+
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_os::init())
@@ -173,8 +253,34 @@ pub fn run() {
             library::library_note_play,
             library::library_note_progress,
             library::library_stats,
-            library::library_reveal
+            library::library_reveal,
+            library::playlist_create,
+            library::playlists_all,
+            library::playlist_delete,
+            library::playlist_add,
+            library::playlist_remove_item,
+            library::playlist_items,
+            widget_toggle,
+            widget_set_expanded,
+            app_show_main,
+            app_quit,
+            set_background_playback
         ])
+        .on_window_event(|window, event| {
+            // Phase 3: closing the main window while music plays → hide it and
+            // surface the desktop widget instead of killing playback.
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main"
+                    && BACKGROUND_PLAYBACK.load(Ordering::Relaxed)
+                    && mpv::is_audio_active()
+                {
+                    api.prevent_close();
+                    let _ = window.hide();
+                    // the widget is the recovery UI — make sure it's up
+                    let _ = widget_toggle(window.app_handle().clone());
+                }
+            }
+        })
         .setup(|app| {
             // Window materials, applied before the main window is shown.
             #[cfg(windows)]

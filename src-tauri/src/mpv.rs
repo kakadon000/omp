@@ -133,6 +133,7 @@ unsafe fn create_surface(parent: HWND, class_atom: &str) -> Result<HWND, String>
 type MpvHandle = c_void;
 
 // mpv_format values
+const FMT_STRING: i32 = 1;
 const FMT_FLAG: i32 = 3;
 const FMT_DOUBLE: i32 = 5;
 
@@ -426,10 +427,14 @@ fn pump(h: SendPtr, app: AppHandle, stop: Arc<AtomicBool>) {
                             )
                         })
                         .unwrap_or((0, 0));
+                    // Phase 3: the actual resolved path — lets the audio service
+                    // know when a video loadfile took the engine over
+                    let path = get_prop_string(a, h, "path").unwrap_or_default();
                     let _ = app.emit(
                         "omp://mpv",
                         serde_json::json!({
-                            "kind": "loaded", "d": dur, "tracks": tracks, "vw": vw, "vh": vh
+                            "kind": "loaded", "d": dur, "tracks": tracks, "vw": vw, "vh": vh,
+                            "path": path
                         }),
                     );
                     // pause state requested before load applies now — push it
@@ -459,6 +464,17 @@ fn pump(h: SendPtr, app: AppHandle, stop: Arc<AtomicBool>) {
                         ("duration", FMT_DOUBLE) => {
                             let d = *((*p).data as *const f64);
                             let _ = app.emit("omp://mpv", serde_json::json!({ "kind": "duration", "d": d }));
+                        }
+                        ("icy-title", FMT_STRING) => {
+                            // internet radio now-playing metadata (Phase 3)
+                            if !(*p).data.is_null() {
+                                let t = std::ffi::CStr::from_ptr((*p).data as *const c_char)
+                                    .to_string_lossy()
+                                    .into_owned();
+                                if !t.is_empty() {
+                                    let _ = app.emit("omp://mpv", serde_json::json!({ "kind": "icy", "title": t }));
+                                }
+                            }
                         }
                         _ => {}
                     }
@@ -492,17 +508,23 @@ pub fn mpv_status() -> Status {
 }
 
 #[tauri::command]
-pub fn mpv_attach(app: AppHandle, hwdec: Option<String>) -> Status {
+pub fn mpv_attach(app: AppHandle, hwdec: Option<String>, show: Option<bool>) -> Status {
+    let show_surface = show.unwrap_or(true);
     let st = mpv_status();
     if !st.available {
         return st;
     }
-    // already attached → just show
+    // already attached → surface policy only. Audio sessions attach hidden
+    // (show=false) so the empty video surface never blacks out the UI.
     if st.active {
-        if let Some(hwnd) = with_instance(|i, _| i.hwnd) {
-            unsafe {
-                ShowWindow(hwnd, SW_SHOW);
+        if show_surface {
+            if let Some(hwnd) = with_instance(|i, _| i.hwnd) {
+                unsafe {
+                    ShowWindow(hwnd, SW_SHOW);
+                }
             }
+            // video is back on screen — same CPU rule as a fresh attach
+            crate::set_playback_effects(&app, true);
         }
         return st;
     }
@@ -574,6 +596,9 @@ pub fn mpv_attach(app: AppHandle, hwdec: Option<String>) -> Status {
         (a.observe_property)(h, 2, n.as_ptr(), FMT_FLAG);
         let n = CString::new("duration").unwrap();
         (a.observe_property)(h, 3, n.as_ptr(), FMT_DOUBLE);
+        // internet radio now-playing (fires only when the stream provides it)
+        let n = CString::new("icy-title").unwrap();
+        (a.observe_property)(h, 4, n.as_ptr(), FMT_STRING);
 
         let stop = Arc::new(AtomicBool::new(false));
         let stop2 = stop.clone();
@@ -588,14 +613,28 @@ pub fn mpv_attach(app: AppHandle, hwdec: Option<String>) -> Status {
         // strip the DWM material (Mica/Acrylic) while video plays under the
         // transparent webview. Blur-behind over 60fps video was forcing a
         // full-window blur recomposition every single frame. Restored on
-        // mpv_detach. (Only on success — a failed attach keeps the glass.)
-        crate::set_playback_effects(&app, true);
+        // mpv_detach. Only for VISIBLE (video) attaches — audio sessions
+        // keep the glass; there is no video to fight the material.
+        if show_surface {
+            crate::set_playback_effects(&app, true);
+        }
     }
     mpv_status()
 }
 
 #[tauri::command]
 pub fn mpv_detach(app: AppHandle) -> bool {
+    // Phase 3: the engine is GLOBAL. If music is what's loaded, navigating
+    // away (Player unmount) must NOT kill it — hide the video surface and
+    // keep the engine running. Only video/idle sessions fully release.
+    if is_audio_active() {
+        if let Some(hwnd) = with_instance(|i, _| i.hwnd) {
+            unsafe {
+                ShowWindow(hwnd, SW_HIDE);
+            }
+        }
+        return true;
+    }
     // v0.5.0 CPU fix mirror: bring the Mica/Acrylic glass back for the UI
     crate::set_playback_effects(&app, false);
     detach_impl()
@@ -613,6 +652,7 @@ pub struct EngineStats {
     pub audio: String,      // active audio device shorthand
     pub avsync: f64,
     pub bitrate: f64,       // video bitrate kbps
+    pub path: String,       // currently loaded media path (ownership checks)
 }
 
 #[tauri::command]
@@ -631,9 +671,36 @@ pub fn mpv_stats() -> Option<EngineStats> {
             audio: prop("current-ao"),
             avsync: prop("avsync").parse().unwrap_or(0.0),
             bitrate: prop("video-bitrate").parse().unwrap_or(0.0),
+            path: prop("path"),
         }
     });
     s
+}
+
+/// True when the engine has an AUDIO file loaded —
+/// drives "close keeps the music playing" background behaviour.
+/// Embedded album art counts as audio; any real video track counts as video.
+pub(crate) fn is_audio_active() -> bool {
+    with_instance(|inst, a| unsafe {
+        // idle-active: nothing queued at all
+        let idle = get_prop_string(a, inst.h.0, "idle-active")
+            .map(|s| s == "yes" || s == "true")
+            .unwrap_or(true);
+        if idle {
+            return false;
+        }
+        let tracks = get_prop_string(a, inst.h.0, "track-list").unwrap_or_default();
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&tracks) else {
+            return false;
+        };
+        let Some(arr) = v.as_array() else { return false };
+        // any real (non-albumart) video track → this is video, not audio
+        !arr.iter().any(|t| {
+            t.get("type").and_then(|x| x.as_str()) == Some("video")
+                && t.get("albumart").and_then(|x| x.as_bool()) != Some(true)
+        })
+    })
+    .unwrap_or(false)
 }
 
 fn detach_impl() -> bool {
@@ -875,12 +942,16 @@ pub(crate) struct ProbeMeta {
     pub video_codec: String,
     pub audio_codec: String,
     pub container: String,
+    /// embedded tag metadata (Phase 3 audio library)
+    pub artist: String,
+    pub album: String,
+    pub genre: String,
     /// true when a thumbnail image was written into `thumb_dir`
     pub thumb: bool,
 }
 
 #[cfg(windows)]
-pub(crate) fn probe_media(path: &str, thumb_dir: Option<&Path>) -> Option<ProbeMeta> {
+pub(crate) fn probe_media(path: &str, thumb_dir: Option<&Path>, audio: bool) -> Option<ProbeMeta> {
     let a = api()?;
     let want_thumb = thumb_dir.is_some();
     if want_thumb {
@@ -896,7 +967,8 @@ pub(crate) fn probe_media(path: &str, thumb_dir: Option<&Path>) -> Option<ProbeM
             ("vo", if want_thumb { "image" } else { "null" }.into()),
             ("ao", "null".into()),
             ("frames", "1".into()),
-            ("start", "+25%".into()),
+            // audio: embedded album art is the first frame — seek must stay at 0
+            ("start", if audio { "0".into() } else { "+25%".into() }),
             ("hwdec", "no".into()),
             ("pause", "no".into()),
             ("terminal", "no".into()),
@@ -942,6 +1014,9 @@ pub(crate) fn probe_media(path: &str, thumb_dir: Option<&Path>) -> Option<ProbeM
             let mut vcodec = String::new();
             let mut acodec = String::new();
             let mut container = String::new();
+            let mut artist = String::new();
+            let mut album = String::new();
+            let mut genre = String::new();
             loop {
                 if std::time::Instant::now() > deadline {
                     break;
@@ -980,6 +1055,11 @@ pub(crate) fn probe_media(path: &str, thumb_dir: Option<&Path>) -> Option<ProbeM
                             }
                         }
                         container = get_prop_string(a, h, "file-format").unwrap_or_default();
+                        // Phase 3: tag metadata (ID3/FLAC/Vorbis). ffmpeg demuxers
+                        // hand tags over lowercase; try common casings as fallback.
+                        artist = tag_lookup(a, h, &["artist", "Artist", "ARTIST", "album_artist", "albumartist"]);
+                        album = tag_lookup(a, h, &["album", "Album", "ALBUM"]);
+                        genre = tag_lookup(a, h, &["genre", "Genre", "GENRE"]);
                     }
                     EV_END_FILE | EV_SHUTDOWN => break,
                     _ => {}
@@ -1007,6 +1087,9 @@ pub(crate) fn probe_media(path: &str, thumb_dir: Option<&Path>) -> Option<ProbeM
                 video_codec: vcodec,
                 audio_codec: acodec,
                 container,
+                artist,
+                album,
+                genre,
                 thumb,
             });
         }
@@ -1015,7 +1098,22 @@ pub(crate) fn probe_media(path: &str, thumb_dir: Option<&Path>) -> Option<ProbeM
     out
 }
 
+/// Read a tag via metadata/by-key with case fallbacks. Empty when absent.
+#[cfg(windows)]
+unsafe fn tag_lookup(a: &MpvApi, h: *mut MpvHandle, keys: &[&str]) -> String {
+    for k in keys {
+        let prop = format!("metadata/by-key/{k}");
+        if let Some(v) = get_prop_string(a, h, &prop) {
+            let v = v.trim().to_string();
+            if !v.is_empty() {
+                return v;
+            }
+        }
+    }
+    String::new()
+}
+
 #[cfg(not(windows))]
-pub(crate) fn probe_media(_path: &str, _thumb_dir: Option<&Path>) -> Option<ProbeMeta> {
+pub(crate) fn probe_media(_path: &str, _thumb_dir: Option<&Path>, _audio: bool) -> Option<ProbeMeta> {
     None
 }

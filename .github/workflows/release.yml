@@ -60,6 +60,6 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "OMP ${{ github.ref_name }}"
-          releaseBody: "Every Format. One Player. Open to All. — v0.5.0: the ultra-light engine fix. Window material (Mica/Acrylic) now detaches during playback, all backdrop blur is suspended while video is live, hardware decode takes the fast path (auto instead of auto-safe), and Stats for nerds now shows the live decode path (hardware d3d11va / software) so nothing is ever silent. Plus the v0.4 bulletproof installer and the full Phase 2 SQLite library. Download the Windows installer below."
+          releaseBody: "Every Format. One Player. Open to All. — v0.6.0: Phase 3 — Music & widgets. Real music library with embedded album art and tag metadata, SQLite playlists, internet radio with live now-playing titles, a real always-on-top desktop widget window, and background playback (close keeps the music). Download the Windows installer below."
           releaseDraft: false
           prerelease: false
