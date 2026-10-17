@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="color-scheme" content="dark" />
+<title>OMP — Open Media Player · Every Format. One Player. Open to All.</title>
+<meta name="description" content="OMP is a free, open-source Windows media player. Universal playback, library and gallery, a lightweight editor, music with a desktop widget, and online media — Windows 10 & 11, Mica and Acrylic tuned per system." />
+<link rel="icon" type="image/png" href="./assets/icon-192.png" />
+<style>
+  :root {
+    --accent: #4cc2ff; --accent-dim: rgba(76,194,255,.13); --accent-text: #062033;
+    --bg: #16181d; --surface: rgba(255,255,255,.05); --surface2: rgba(255,255,255,.085);
+    --stroke: rgba(255,255,255,.09); --stroke2: rgba(255,255,255,.16);
+    --text: #f2f3f6; --text2: rgba(242,243,246,.62); --text3: rgba(242,243,246,.4);
+    --radius: 12px;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html { scroll-behavior:smooth; }
+  body {
+    font-family:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif;
+    background:var(--bg); color:var(--text); font-size:15px; line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+  }
+  ::selection { background:var(--accent-dim); }
+  a { color:var(--accent); text-decoration:none; }
+  .wrap { max-width:1080px; margin:0 auto; padding:0 24px; }
+
+  /* nav */
+  nav { position:sticky; top:0; z-index:50; backdrop-filter:blur(24px) saturate(1.3); -webkit-backdrop-filter:blur(24px) saturate(1.3);
+    background:rgba(22,24,29,.72); border-bottom:1px solid var(--stroke); }
+  .nav-in { display:flex; align-items:center; gap:24px; height:60px; }
+  .brand { display:flex; align-items:center; gap:10px; font-weight:700; letter-spacing:.08em; font-size:15px; color:var(--text); }
+  .brand img { width:26px; height:26px; border-radius:8px; }
+  .nav-links { display:flex; gap:4px; margin-left:auto; }
+  .nav-links a { color:var(--text2); font-size:13.5px; padding:7px 13px; border-radius:8px; transition:.15s; }
+  .nav-links a:hover { background:var(--surface2); color:var(--text); }
+  .nav-cta { background:var(--accent); color:var(--accent-text) !important; font-weight:600; }
+  @media (max-width:760px){ .nav-links a:not(.nav-cta){ display:none; } }
+
+  /* hero */
+  .hero { padding:90px 0 60px; text-align:center; position:relative; overflow:hidden; }
+  .hero img.logo { width:104px; height:104px; border-radius:28px; box-shadow:0 24px 70px rgba(0,40,100,.45); }
+  .hero h1 { font-family:"Segoe UI Variable Display","Segoe UI",sans-serif; font-size:clamp(38px,6vw,58px); font-weight:650; letter-spacing:.1em; margin:26px 0 8px; }
+  .hero .tag { color:var(--text2); font-size:17px; margin-bottom:30px; }
+  .hero .badges { display:flex; gap:8px; justify-content:center; flex-wrap:wrap; margin-bottom:34px; }
+  .badge { display:inline-flex; align-items:center; gap:6px; height:26px; padding:0 11px; border-radius:99px;
+    background:var(--surface2); border:1px solid var(--stroke); font-size:12px; color:var(--text2); }
+  .btn { display:inline-flex; align-items:center; gap:9px; height:44px; padding:0 22px; border-radius:10px;
+    font-size:14.5px; font-weight:600; transition:.15s; cursor:pointer; border:1px solid transparent; }
+  .btn svg { width:16px; height:16px; }
+  .btn.primary { background:var(--accent); color:var(--accent-text); }
+  .btn.primary:hover { filter:brightness(1.08); transform:translateY(-1px); }
+  .btn.ghost { background:var(--surface); border-color:var(--stroke2); color:var(--text); }
+  .btn.ghost:hover { background:var(--surface2); }
+  .hero .cta { display:flex; gap:12px; justify-content:center; flex-wrap:wrap; }
+  .hero .sub { margin-top:16px; font-size:12.5px; color:var(--text3); }
+
+  /* screenshot */
+  .shot { max-width:960px; margin:54px auto 0; border-radius:16px; border:1px solid var(--stroke2);
+    box-shadow:0 40px 100px rgba(0,0,0,.55); overflow:hidden; }
+  .shot img { width:100%; display:block; }
+  .shot-bar { display:flex; align-items:center; gap:6px; padding:10px 14px; background:rgba(255,255,255,.045); border-bottom:1px solid var(--stroke); }
+  .shot-bar i { width:11px; height:11px; border-radius:99px; background:var(--surface2); }
+  .shot-bar i:first-child { background:var(--accent); }
+
+  /* sections */
+  section { padding:74px 0; }
+  .sec-head { text-align:center; max-width:640px; margin:0 auto 46px; }
+  .sec-head .kicker { color:var(--accent); font-size:12.5px; font-weight:700; letter-spacing:.14em; text-transform:uppercase; }
+  .sec-head h2 { font-family:"Segoe UI Variable Display","Segoe UI",sans-serif; font-size:clamp(26px,4vw,36px); font-weight:650; margin:10px 0 10px; }
+  .sec-head p { color:var(--text2); }
+  .grid { display:grid; gap:14px; }
+  .g3 { grid-template-columns:repeat(3,1fr); } .g2 { grid-template-columns:repeat(2,1fr); }
+  @media (max-width:860px){ .g3{grid-template-columns:1fr;} .g2{grid-template-columns:1fr;} }
+  .card { background:var(--surface); border:1px solid var(--stroke); border-radius:var(--radius); padding:26px; transition:.2s; }
+  .card:hover { background:var(--surface2); border-color:var(--stroke2); transform:translateY(-2px); }
+  .card .ico { width:40px; height:40px; border-radius:11px; background:var(--accent-dim); color:var(--accent);
+    display:flex; align-items:center; justify-content:center; margin-bottom:16px; }
+  .card .ico svg { width:19px; height:19px; }
+  .card h3 { font-size:16px; font-weight:600; margin-bottom:7px; }
+  .card p { font-size:13.5px; color:var(--text2); }
+
+  /* windows section */
+  .win-cards .card b.win11 { color:var(--accent); }
+  .win-cards .card .osname { font-family:"Segoe UI Variable Display",sans-serif; font-size:20px; font-weight:650; margin-bottom:8px; }
+
+  /* performance stats */
+  .stats { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; }
+  @media (max-width:860px){ .stats{grid-template-columns:repeat(2,1fr);} }
+  .stat { text-align:center; padding:26px 12px; }
+  .stat .v { font-family:"Segoe UI Variable Display",sans-serif; font-size:30px; font-weight:650; color:var(--accent); }
+  .stat .k { font-size:12.5px; color:var(--text2); margin-top:4px; }
+
+  /* roadmap */
+  .phases { display:flex; flex-direction:column; gap:0; max-width:760px; margin:0 auto; }
+  .phase { display:flex; gap:18px; position:relative; padding:0 0 34px 0; }
+  .phase:last-child { padding-bottom:0; }
+  .phase .dot-col { display:flex; flex-direction:column; align-items:center; flex:none; }
+  .phase .dot { width:34px; height:34px; border-radius:99px; background:var(--surface2); border:1px solid var(--stroke2);
+    display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700; color:var(--text2); flex:none; }
+  .phase.done .dot { background:var(--accent); border-color:var(--accent); color:var(--accent-text); }
+  .phase .line { width:1px; flex:1; background:var(--stroke2); margin-top:6px; }
+  .phase:last-child .line { display:none; }
+  .phase .ph-body { padding-top:4px; }
+  .phase h3 { font-size:15.5px; font-weight:600; }
+  .phase h3 .state { font-size:10.5px; font-weight:700; letter-spacing:.08em; padding:2px 8px; border-radius:99px; margin-left:8px; vertical-align:2px; }
+  .state.now { background:var(--accent); color:var(--accent-text); }
+  .state.next { background:var(--surface2); color:var(--text2); border:1px solid var(--stroke2); }
+  .phase p { font-size:13.5px; color:var(--text2); margin-top:4px; max-width:560px; }
+
+  /* open source */
+  .oss { text-align:center; }
+  .oss .logos { display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin:26px 0; }
+  .oss .logos span { border:1px solid var(--stroke2); border-radius:99px; padding:8px 18px; font-size:13px; color:var(--text2); background:var(--surface); }
+
+  /* footer */
+  footer { border-top:1px solid var(--stroke); padding:34px 0 44px; color:var(--text3); font-size:13px; }
+  .foot-in { display:flex; align-items:center; gap:18px; flex-wrap:wrap; }
+  .foot-in .brand { font-size:13px; }
+  .foot-in .right { margin-left:auto; display:flex; gap:16px; }
+  .foot-in a { color:var(--text2); } .foot-in a:hover { color:var(--text); }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap nav-in">
+    <a class="brand" href="#"><img src="./assets/icon-192.png" alt="" /> OMP</a>
+    <div class="nav-links">
+      <a href="#features">Features</a>
+      <a href="#windows">Windows 10 &amp; 11</a>
+      <a href="#performance">Performance</a>
+      <a href="#roadmap">Roadmap</a>
+      <a href="https://github.com/kakadon000/omp" target="_blank" rel="noopener">GitHub</a>
+      <a class="nav-cta" href="https://github.com/kakadon000/omp/releases/latest" target="_blank" rel="noopener">Download</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <img class="logo" src="./assets/icon-512.png" alt="OMP icon" />
+    <h1>OMP</h1>
+    <div class="tag">Every Format. One Player. Open to All.</div>
+    <div class="badges">
+      <span class="badge">Windows 10 · 11</span>
+      <span class="badge">GPL-3.0 open source</span>
+      <span class="badge">No ads · no tracking</span>
+      <span class="badge">Built for low-end PCs</span>
+    </div>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/kakadon000/omp/releases/latest" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10.5 12 15.5l5-5M4.5 19.5h15"/></svg>
+        Download for Windows
+      </a>
+      <a class="btn ghost" href="./app/">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m7 4.8 11.2 7.2c.6.4.6 1.4 0 1.8L7 20.2c-.7.4-1.6-.1-1.6-.9V5.7c0-.8.9-1.3 1.6-.9Z"/></svg>
+        Try the web demo
+      </a>
+    </div>
+    <div class="sub">Free installer · NSIS &amp; MSI · built automatically on GitHub Actions from public source</div>
+
+    <div class="shot">
+      <div class="shot-bar"><i></i><i></i><i></i></div>
+      <img src="./assets/app-player.png" alt="OMP player interface" loading="lazy" />
+    </div>
+  </div>
+</header>
+
+<section id="features">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="kicker">Features</div>
+      <h2>One player for everything you open</h2>
+      <p>OMP owns the interface and experience — and reuses proven media engines so playback just works.</p>
+    </div>
+    <div class="grid g3">
+      <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M8 4.5v15M16 4.5v15M3.5 9.5H8M3.5 14.5H8M16 9.5h4.5M16 14.5h4.5"/></svg></div>
+        <h3>Universal playback</h3><p>Video and music with playlists, subtitles, multiple audio tracks, playback speed, frame stepping and hardware acceleration where available.</p></div>
+      <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5.5" width="16" height="13" rx="1.5"/><path d="m4 16 4.5-4.5c.6-.6 1.5-.6 2 0L15 16"/><circle cx="9" cy="8.7" r="1.4"/></svg></div>
+        <h3>Gallery &amp; library</h3><p>Images, folders, thumbnails, search, metadata, zoom, rotation and slideshows — with an incremental, cancellable library scan.</p></div>
+      <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><path d="M8.2 7.6 20 18M20 6 8.2 16.4"/></svg></div>
+        <h3>Lightweight editor</h3><p>Trim, crop, shapes, arrows and text overlays with keyframes, undo/redo and editable <b>.ompj</b> projects. Real FFmpeg exports.</p></div>
+      <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18.5V6.2c0-.5.3-.9.8-1l8-1.8c.6-.2 1.2.4 1.2 1v11.6"/><circle cx="6.5" cy="18.5" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/></svg></div>
+        <h3>Music &amp; desktop widget</h3><p>Album artwork, playlists and internet radio — plus a tiny floating player that keeps music going even with the main window closed.</p></div>
+      <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.7 2.3 4 5.2 4 8.5s-1.3 6.2-4 8.5c-2.7-2.3-4-5.2-4-8.5s1.3-6.2 4-8.5Z"/></svg></div>
+        <h3>Online media</h3><p>A dedicated YouTube experience, YouTube Music where supported, internet radio and authorized IPTV. Zero OMP-inserted ads.</p></div>
+      <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.5a8.5 8.5 0 1 0 0 17c1.2 0 2-.9 2-2 0-.6-.3-1-.6-1.4-.3-.4-.6-.8-.6-1.4 0-1.1.9-2 2-2h2.4c1.8 0 3.3-1.5 3.3-3.2C20.5 6.4 16.7 3.5 12 3.5Z"/></svg></div>
+        <h3>Theme Studio</h3><p>Dark, light and system themes, five tasteful accent colors, adjustable transparency and a Reduced Effects mode for low-end hardware.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="windows" style="background:rgba(255,255,255,.02); border-top:1px solid var(--stroke); border-bottom:1px solid var(--stroke);">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="kicker">Windows 10 &amp; Windows 11</div>
+      <h2>Two systems. Two tuned materials.</h2>
+      <p>OMP detects your Windows generation and selects the right window material explicitly — never the same settings everywhere.</p>
+    </div>
+    <div class="grid g2 win-cards">
+      <div class="card">
+        <div class="osname"><span class="win11">Windows 11</span> · Mica</div>
+        <p>Mica on the main window where appropriate, plus carefully designed translucent surfaces. Mica incorporates your desktop wallpaper without stealing focus from content.</p>
+      </div>
+      <div class="card">
+        <div class="osname">Windows 10 · Acrylic</div>
+        <p>Its own Acrylic/blur treatment with a custom translucent fallback where the effect is unsupported — because Windows 10 and 11 never render the same way.</p>
+      </div>
+      <div class="card" style="grid-column:1/-1; display:flex; gap:18px; align-items:center; flex-wrap:wrap;">
+        <div class="ico" style="margin:0;"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 13.5a7.5 7.5 0 1 1 15 0"/><path d="m12 13.5 3.8-4.6"/><path d="M4 18.5h16"/></svg></div>
+        <div style="flex:1; min-width:220px;">
+          <h3>Reduced Effects mode</h3>
+          <p>No continuous animated backgrounds, no unnecessary blur, no demanding visualizers — one toggle for low-end machines.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="performance">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="kicker">Performance</div>
+      <h2>Minimum resources before maximum features</h2>
+      <p>Benchmarked against a dual-core CPU with 4 GB RAM and integrated graphics — on both Windows generations, independently.</p>
+    </div>
+    <div class="stats">
+      <div class="card stat"><div class="v">~0%</div><div class="k">Idle CPU after startup settles</div></div>
+      <div class="card stat"><div class="v">100 MB</div><div class="k">RAM target for idle core player</div></div>
+      <div class="card stat"><div class="v">Lazy</div><div class="k">Editor, online &amp; themes load on demand</div></div>
+      <div class="card stat"><div class="v">0</div><div class="k">Background scans while idle</div></div>
+    </div>
+  </div>
+</section>
+
+<section id="roadmap" style="background:rgba(255,255,255,.02); border-top:1px solid var(--stroke); border-bottom:1px solid var(--stroke);">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="kicker">Roadmap</div>
+      <h2>Working milestones, not unfinished buttons</h2>
+      <p>Every phase ships a working deliverable with a clear exit condition.</p>
+    </div>
+    <div class="phases">
+      <div class="phase done"><div class="dot-col"><div class="dot">✓</div><div class="line"></div></div>
+        <div class="ph-body"><h3>Phase 0 — Technical proof</h3><p>Tauri shell, native window-effects module and the playback adapter — proven before anything is built around it.</p></div></div>
+      <div class="phase done"><div class="dot-col"><div class="dot">✓</div><div class="line"></div></div>
+        <div class="ph-body"><h3>Phase 1 — Core OMP Player <span class="state now">Current</span></h3><p>Main interface, file picker, playback controls, playlists, subtitles, keyboard shortcuts and the media-engine adapter.</p></div></div>
+      <div class="phase"><div class="dot-col"><div class="dot">2</div><div class="line"></div></div>
+        <div class="ph-body"><h3>Phase 2 — Library &amp; gallery</h3><p>SQLite library, incremental cancellable scans, thumbnails and full image operations — without playback stutter.</p></div></div>
+      <div class="phase"><div class="dot-col"><div class="dot">3</div><div class="line"></div></div>
+        <div class="ph-body"><h3>Phase 3 — Music &amp; widgets</h3><p>Music continues with the main window closed; the floating widget stays feather-light.</p></div></div>
+      <div class="phase"><div class="dot-col"><div class="dot">4</div><div class="line"></div></div>
+        <div class="ph-body"><h3>Phase 4 — Lightweight editor</h3><p>Editable .ompj projects reopened and re-edited, exported with FFmpeg exactly as designed.</p></div></div>
+      <div class="phase"><div class="dot-col"><div class="dot">5</div><div class="line"></div></div>
+        <div class="ph-body"><h3>Phase 5 — Online media</h3><p>YouTube, YouTube Music where permitted, IPTV playlists and radio — isolated permissions, no stray processes.</p></div></div>
+      <div class="phase"><div class="dot-col"><div class="dot">6</div><div class="line"></div></div>
+        <div class="ph-body"><h3>Phase 6 — Themes &amp; release</h3><p>Theme Studio, performance profiling, signed installers and automated GitHub releases.</p></div></div>
+    </div>
+  </div>
+</section>
+
+<section class="oss">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="kicker">Open source</div>
+      <h2>Free, forever — and it stays that way</h2>
+      <p>GPL-3.0-or-later, with dependency notices and build information shipped in every release. OMP contains no advertising and no tracking. Format support is published as a tested matrix — playing, editing and exporting are documented per format.</p>
+    </div>
+    <div class="logos">
+      <span>Tauri 2</span><span>Rust</span><span>React + TypeScript</span><span>mpv / libmpv</span><span>FFmpeg</span><span>libvips</span><span>SQLite</span>
+    </div>
+    <a class="btn primary" href="https://github.com/kakadon000/omp" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4.5h5.5V10M19.5 4.5 11 13M9 6H6.5C5.4 6 4.5 6.9 4.5 8v9.5c0 1.1.9 2 2 2H16c1.1 0 2-.9 2-2V15"/></svg>
+      Read the source on GitHub
+    </a>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap foot-in">
+    <span class="brand"><img src="./assets/icon-192.png" alt="" style="width:20px;height:20px;border-radius:6px;vertical-align:-4px;" /> OMP</span>
+    <span>© 2026 OMP contributors · GPL-3.0-or-later</span>
+    <div class="right">
+      <a href="https://github.com/kakadon000/omp" target="_blank" rel="noopener">Source</a>
+      <a href="https://github.com/kakadon000/omp/releases/latest" target="_blank" rel="noopener">Releases</a>
+      <a href="./app/">Web demo</a>
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>

@@ -1,0 +1,83 @@
+/* ============ base: reset, shell layout, scrollbars, a11y ============ */
+*, *::before, *::after { box-sizing: border-box; }
+* { margin: 0; padding: 0; }
+
+html, body, #root { height: 100%; }
+
+body {
+  font-family: var(--font);
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+/* web demo backdrop (in the desktop app, Mica/Acrylic shows through) */
+html.web body::before {
+  content: "";
+  position: fixed; inset: 0; z-index: -2;
+  background: var(--bg-solid);
+}
+html.web[data-theme="dark"] body::before { background: #16181d; }
+
+::selection { background: var(--accent-dim); color: var(--text); }
+
+button, input, select, textarea { font: inherit; color: inherit; }
+button { background: none; border: none; cursor: pointer; }
+a { color: var(--accent); text-decoration: none; }
+img { -webkit-user-drag: none; }
+
+:focus { outline: none; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+
+/* Fluent thin scrollbars */
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-thumb {
+  background: var(--text-3); border-radius: 99px;
+  border: 4px solid transparent; background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--text-2); border: 3px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* ---------------- app shell ---------------- */
+.shell { height: 100%; display: flex; flex-direction: column; }
+
+.shell-body { flex: 1; display: flex; min-height: 0; }
+
+.main {
+  flex: 1; min-width: 0; overflow-y: auto; overflow-x: hidden;
+  padding: 24px 28px 40px;
+}
+.main.no-pad { padding: 0; }
+
+.page-head { margin-bottom: 20px; }
+.page-title { font-family: var(--font-display); font-size: 26px; font-weight: 600; letter-spacing: -0.01em; }
+.page-sub { color: var(--text-2); margin-top: 3px; font-size: 13px; }
+
+/* ---------------- reduced effects mode ---------------- */
+html.reduced *,
+html.reduced *::before,
+html.reduced *::after {
+  animation-duration: 0.001s !important;
+  transition-duration: 0.001s !important;
+}
+html.reduced .glass, html.reduced .card, html.reduced .panel {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+html.reduced { --glass-blur: 0px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.001s !important; transition-duration: 0.001s !important; }
+}
+
+/* ---------------- windows 10 tweaks ---------------- */
+html[data-win="10"] .titlebar { border-bottom: 1px solid var(--stroke); }
+
+/* small screens: rail sidebar only */
+@media (max-width: 760px) {
+  .main { padding: 18px 16px 96px; }
+}

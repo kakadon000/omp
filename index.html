@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark light" />
+    <title>OMP — Open Media Player</title>
+    <link rel="icon" type="image/png" href="./favicon.png" />
+    <link rel="stylesheet" href="./src/styles/tokens.css" />
+    <link rel="stylesheet" href="./src/styles/base.css" />
+    <link rel="stylesheet" href="./src/styles/ui.css" />
+    <link rel="stylesheet" href="./src/styles/screens.css" />
+    <script>
+      // pre-paint theme bootstrap — no flash
+      (function () {
+        try {
+          var s = JSON.parse(localStorage.getItem("omp.settings") || "{}");
+          var t = s.theme || "dark";
+          if (t === "system") t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+          document.documentElement.dataset.theme = t;
+          if (s.accent) document.documentElement.dataset.accent = s.accent;
+          if (s.effects === "reduced") document.documentElement.classList.add("reduced");
+          if (typeof s.transparency === "number")
+            document.documentElement.style.setProperty("--glass-blur", (s.transparency * 36).toFixed(0) + "px");
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

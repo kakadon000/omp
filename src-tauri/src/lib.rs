@@ -1,0 +1,133 @@
+// OMP — Open Media Player · native shell
+// Owns: window effects (Mica / Acrylic per Windows generation), splash handoff,
+// custom titlebar window controls, and shell info for the UI.
+
+use tauri::Manager;
+
+/// Detect the Windows build number from the OS plugin (e.g. "10.0.22631").
+#[cfg(windows)]
+fn windows_build() -> u32 {
+    tauri_plugin_os::version()
+        .unwrap_or_default()
+        .split('.')
+        .nth(2)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
+}
+
+/// Apply the right material for this Windows generation.
+/// Rule from the spec: detect the environment, never assume both render the same.
+#[cfg(windows)]
+fn apply_effect(window: &tauri::window::Window, mica: bool) {
+    use tauri::window::{WindowEffect, WindowEffectsConfig};
+    let cfg = WindowEffectsConfig {
+        effects: vec![if mica { WindowEffect::Mica } else { WindowEffect::Acrylic }],
+        state: None,
+        radius: None,
+        color: None,
+    };
+    // If the requested material is unsupported, fall back silently —
+    // the CSS layer already ships a translucent fallback.
+    if window.set_effects(cfg).is_err() && mica {
+        let _ = window.set_effects(WindowEffectsConfig {
+            effects: vec![WindowEffect::Acrylic],
+            state: None,
+            radius: None,
+            color: None,
+        });
+    }
+}
+
+#[tauri::command]
+fn close_splash(app: tauri::AppHandle) {
+    if let Some(splash) = app.get_window("splashscreen") {
+        let _ = splash.close();
+    }
+    if let Some(main) = app.get_window("main") {
+        let _ = main.show();
+        let _ = main.set_focus();
+    }
+}
+
+#[tauri::command]
+fn win_min(app: tauri::AppHandle) {
+    if let Some(w) = app.get_window("main") {
+        let _ = w.minimize();
+    }
+}
+
+#[tauri::command]
+fn win_max_toggle(app: tauri::AppHandle) -> bool {
+    if let Some(w) = app.get_window("main") {
+        let maxed = w.is_maximized().unwrap_or(false);
+        if maxed {
+            let _ = w.unmaximize();
+        } else {
+            let _ = w.maximize();
+        }
+        return w.is_maximized().unwrap_or(false);
+    }
+    false
+}
+
+#[tauri::command]
+fn win_close(app: tauri::AppHandle) {
+    if let Some(w) = app.get_window("main") {
+        let _ = w.close();
+    }
+}
+
+/// Shell info for the UI: OS generation drives html[data-win] styling
+/// (Windows 10 gets square corners + acrylic, Windows 11 gets Mica + rounded).
+#[tauri::command]
+fn shell_info() -> serde_json::Value {
+    #[cfg(windows)]
+    {
+        let build = windows_build();
+        let v = tauri_plugin_os::version().unwrap_or_default();
+        serde_json::json!({
+            "os": "windows",
+            "win": if build >= 22000 { "11" } else { "10" },
+            "version": v,
+            "effects": if build >= 22000 { "mica" } else { "acrylic" },
+        })
+    }
+    #[cfg(not(windows))]
+    {
+        serde_json::json!({
+            "os": std::env::consts::OS,
+            "win": "other",
+            "version": "0.1.0",
+            "effects": "css",
+        })
+    }
+}
+
+pub fn run() {
+    tauri::Builder::default()
+        .plugin(tauri_plugin_os::init())
+        .plugin(tauri_plugin_dialog::init())
+        .invoke_handler(tauri::generate_handler![
+            close_splash,
+            win_min,
+            win_max_toggle,
+            win_close,
+            shell_info
+        ])
+        .setup(|app| {
+            // Window materials, applied before the main window is shown.
+            #[cfg(windows)]
+            {
+                let mica = windows_build() >= 22000;
+                if let Some(w) = app.get_window("main") {
+                    apply_effect(&w, mica);
+                }
+                if let Some(s) = app.get_window("splashscreen") {
+                    apply_effect(&s, mica);
+                }
+            }
+            Ok(())
+        })
+        .run(tauri::generate_context!())
+        .expect("error while running OMP");
+}
