@@ -5,6 +5,7 @@ import { Icon } from "../components/Icon";
 import { toast } from "../components/Toast";
 import { openContextMenu } from "../components/ContextMenu";
 import { customMedia, loadProgress, saveProgress, pushHistory, type Settings } from "../lib/store";
+import { noteProgress as libNote, notePlay as libNotePlay } from "../lib/library";
 import { fmtTime, pct } from "../lib/format";
 import { invoke, isTauri, openMediaFile, openSubtitleFile } from "../lib/tauri";
 import { videoQueue, type RepeatMode } from "../lib/videoQueue";
@@ -87,6 +88,7 @@ export function Player({ settings }: { settings: Settings }) {
   const loadSrc = custom.path || custom.url || vid.src;
 
   const osdTimer = useRef(0);
+  const lastLibNote = useRef(0);
   const showOsd = useCallback((msg: string) => {
     setOsd({ id: Date.now(), msg });
     window.clearTimeout(osdTimer.current);
@@ -177,7 +179,10 @@ export function Player({ settings }: { settings: Settings }) {
       pushHistory({ id: vid.id, kind: "video", name: vid.title, at: Date.now(), thumb: vid.poster });
       void invoke("mpv_load", { source: loadSrc, start });
     } else {
-      void invoke("mpv_load", { source: loadSrc, start: 0 });
+      const start = custom.startAt && custom.startAt > 3 ? custom.startAt : 0;
+      if (start > 3) toast(`Resumed at ${fmtTime(start)}`, "info");
+      if (custom.path) void libNotePlay(custom.path);
+      void invoke("mpv_load", { source: loadSrc, start });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isMpv, loadSrc]);
@@ -193,6 +198,11 @@ export function Player({ settings }: { settings: Settings }) {
           if (!custom.url && now - lastSave.current > 2000) {
             lastSave.current = now;
             saveProgress(vid.id, e.t, dur);
+          }
+          // Phase 2: real library progress (external/library files)
+          if (custom.path && now - lastLibNote.current > 4000) {
+            lastLibNote.current = now;
+            void libNote(custom.path, e.t, dur);
           }
           break;
         }
@@ -211,7 +221,10 @@ export function Player({ settings }: { settings: Settings }) {
           setPlaying(!e.paused);
           break;
         case "ended": {
-          if (custom.url) break;
+          if (custom.url) {
+            if (custom.path) void libNote(custom.path, 0, dur || 0);
+            break;
+          }
           if (queue.repeat === "one") {
             void invoke("mpv_seek", { t: 0 });
             void invoke("mpv_set_paused", { v: false });
@@ -922,6 +935,11 @@ export function Player({ settings }: { settings: Settings }) {
                 lastSave.current = now;
                 saveProgress(vid.id, v.currentTime, v.duration);
               }
+              // Phase 2: real library progress (external/library files)
+              if (custom.path && now - lastLibNote.current > 4000) {
+                lastLibNote.current = now;
+                void libNote(custom.path, v.currentTime, v.duration || 0);
+              }
             }}
             onProgress={() => {
               const v = videoRef.current;
@@ -940,10 +958,18 @@ export function Player({ settings }: { settings: Settings }) {
                   toast(`Resumed at ${fmtTime(p.t)}`, "info");
                 }
                 pushHistory({ id: vid.id, kind: "video", name: vid.title, at: Date.now(), thumb: vid.poster });
+              } else if (custom.startAt && custom.startAt > 3) {
+                // library/external file — resume where the SQLite library says
+                void robustSeek(v, custom.startAt, src);
+                toast(`Resumed at ${fmtTime(custom.startAt)}`, "info");
+                if (custom.path) void libNotePlay(custom.path);
               }
             }}
             onEnded={() => {
-              if (custom.url) return;
+              if (custom.url) {
+                if (custom.path) void libNote(custom.path, 0, dur || 0);
+                return;
+              }
               if (queue.repeat === "one") {
                 const v = videoRef.current;
                 if (v) { void robustSeek(v, 0, src); void v.play(); }

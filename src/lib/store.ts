@@ -181,7 +181,7 @@ if (audio) {
 /* ------------------------- external file (open with…) ------------------------- */
 import { ensureSeekable } from "./media";
 
-export type CustomMedia = { name: string; url: string; path?: string };
+export type CustomMedia = { name: string; url: string; path?: string; startAt?: number };
 export const customMedia = makeStore<CustomMedia>({ name: "", url: "" });
 
 /* ------------------------- progress + history ------------------------- */

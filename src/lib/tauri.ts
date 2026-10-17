@@ -142,4 +142,4 @@ export async function getShellInfo(): Promise<{
   return info ?? fallback;
 }
 
-export const APP_VERSION = "0.3.0";
+export const APP_VERSION = "0.4.0";

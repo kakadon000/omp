@@ -503,3 +503,118 @@ html.reduced .w-vis i { animation: none; height: 9px; }
 
 .about-hero { display: flex; align-items: center; gap: 16px; padding: 20px; }
 .about-hero img { width: 64px; height: 64px; border-radius: 17px; }
+
+/* ---------------- Phase 2 · SQLite media library ---------------- */
+.lib-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
+  gap: 14px;
+}
+.lib-card {
+  border-radius: var(--radius);
+  border: 1px solid var(--stroke);
+  background: var(--surface);
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform 0.16s var(--ease-fluent), border-color 0.16s, box-shadow 0.16s;
+  min-width: 0;
+}
+.lib-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--stroke));
+  box-shadow: var(--shadow);
+}
+.lib-thumb {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  background: var(--surface-3);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-3);
+  overflow: hidden;
+}
+.lib-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.lib-fallback { display: flex; opacity: 0.7; }
+.lib-dur {
+  position: absolute; right: 6px; bottom: 6px;
+  padding: 1.5px 6px; border-radius: 5px;
+  font-size: 10.5px; font-weight: 600; font-variant-numeric: tabular-nums;
+  background: rgba(8, 10, 14, 0.78); color: #fff;
+  letter-spacing: 0.02em;
+}
+.lib-prog {
+  position: absolute; left: 0; bottom: 0; height: 3px;
+  background: var(--accent); border-radius: 0 2px 0 0;
+}
+.lib-meta { padding: 9px 11px 11px; }
+.lib-title {
+  font-size: 12.8px; font-weight: 600; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.lib-sub {
+  font-size: 11px; color: var(--text-3); margin-top: 2.5px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
+}
+
+/* continue-watching strip */
+.cont-row {
+  display: grid; grid-auto-flow: column;
+  grid-auto-columns: 236px;
+  gap: 12px;
+  overflow-x: auto;
+  padding-bottom: 6px;
+  margin-bottom: 16px;
+  scrollbar-width: thin;
+}
+.cont-row .lib-card.wide { grid-auto-columns: auto; }
+
+/* folders + scan progress */
+.lib-folders {
+  display: flex; align-items: center; gap: 7px; flex-wrap: wrap;
+  margin-bottom: 14px; color: var(--text-3); font-size: 12px;
+}
+.folder-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 6px 3px 10px;
+  border-radius: 99px;
+  background: var(--surface-2);
+  border: 1px solid var(--stroke);
+  color: var(--text-2);
+  font-size: 11.5px;
+  max-width: 260px;
+}
+.folder-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.folder-chip button {
+  display: flex; align-items: center; justify-content: center;
+  width: 17px; height: 17px; border-radius: 50%;
+  color: var(--text-3);
+  transition: background 0.12s, color 0.12s;
+}
+.folder-chip button:hover { background: var(--surface-3); color: var(--text); }
+
+.scan-bar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 14px; margin-bottom: 14px;
+  border-radius: var(--radius);
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--stroke));
+  background: color-mix(in srgb, var(--accent) 7%, var(--surface));
+}
+.scan-bar .spinner { width: 15px; height: 15px; flex: none; }
+.scan-text { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 1px; }
+.scan-text b { font-size: 12.5px; font-weight: 600; }
+.scan-text span {
+  font-size: 11.5px; color: var(--text-3);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.scan-track {
+  width: 130px; height: 4px; border-radius: 99px;
+  background: var(--surface-3); overflow: hidden; flex: none;
+}
+.scan-track i { display: block; height: 100%; background: var(--accent); border-radius: 99px; transition: width 0.25s var(--ease-fluent); }
+
+/* engine fallback diagnostic */
+.engine-warn {
+  display: flex; align-items: center; gap: 12px; padding: 13px 16px; margin-bottom: 12px;
+  border-color: color-mix(in srgb, #ffb454 35%, var(--stroke));
+  background: color-mix(in srgb, #ffb454 8%, var(--surface));
+}

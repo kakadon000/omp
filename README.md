@@ -27,6 +27,40 @@ distinctive, not into reinventing video decoding.
 - **Theme Studio** — dark/light/system, five tasteful accents, adjustable
   transparency, Reduced Effects for low-end PCs.
 
+## What's new in v0.4.0 — bulletproof installer + the real SQLite library (Phase 2)
+
+- **Fixed: the installer that couldn't install** — v0.3's setup could fail with
+  `error writing to file resources\mpv-2.dll` when OMP was still running (or the
+  antivirus briefly held the 116 MB engine DLL). A half-installed OMP then ran
+  on the heavy WebView fallback — which is exactly why CPU looked *worse*
+  (60–70%) after "upgrading". The v0.4 installer force-closes OMP first,
+  waits for file handles to release, and retries locked files before
+  extracting. Upgrading over any old version now just works.
+- **Engine health check** — if the native engine is ever missing from an
+  install, Settings says so explicitly instead of silently falling back.
+- **Phase 2: the real media library (SQLite)** — point OMP at a folder and it
+  builds a searchable, sortable library stored in a local SQLite database:
+  * **Real scanner** — walks your folders (with a skip list for system dirs),
+    indexes video + audio, prunes vanished files. **Incremental** (unchanged
+    files are skipped by size+mtime), **cancellable** (Cancel scan button),
+    and **paced on a background thread** so playback never stutters.
+    Zero disk activity while idle — nothing scans unless you ask.
+  * **Thumbnails** — extracted with a throwaway headless libmpv instance that
+    decodes exactly one frame at ~25% into the file. No extra downloads, no
+    background churn.
+  * **Metadata** — duration, resolution, video/audio codec and container come
+    from the same engine that plays your files, so what you see is what plays.
+  * **Library UI** — poster grid with duration/quality badges and watch
+    progress bars, Continue Watching strip, A–Z / Newest / Recently played /
+    Longest / Most played sorting, type filters, folder chips with one-click
+    removal, full right-click menus (Play / Resume / Play from start / Open
+    file location / Remove).
+  * **Resume everywhere** — positions are saved to SQLite for both engines and
+    playback resumes where you left off, including files you simply "Open
+    with" OMP (they get indexed automatically).
+  * **Live storage stats** — Settings shows videos / tracks / thumbnails /
+    folders counts from the real database.
+
 ## What's new in v0.3.0 — the native mpv engine
 
 - **VLC-grade CPU, for real this time** — OMP now embeds **libmpv** (the same

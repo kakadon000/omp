@@ -60,6 +60,6 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "OMP ${{ github.ref_name }}"
-          releaseBody: "Every Format. One Player. Open to All. — v0.3.0 ships the native mpv engine (VLC-grade CPU, full codec support). Download the Windows installer below."
+          releaseBody: "Every Format. One Player. Open to All. — v0.4.0: installer that can't half-install (auto-closes OMP, repairs locked engine files) + the real Phase 2 SQLite media library (scanner, thumbnails, metadata, resume). Download the Windows installer below."
           releaseDraft: false
           prerelease: false

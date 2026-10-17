@@ -11,6 +11,8 @@ mod mpv;
 #[path = "mpv_stub.rs"]
 mod mpv;
 
+mod library;
+
 /// Detect the Windows build number from the OS plugin (e.g. "10.0.22631").
 #[cfg(windows)]
 fn windows_build() -> u32 {
@@ -129,7 +131,20 @@ pub fn run() {
             mpv::mpv_sub_visibility,
             mpv::mpv_sub_add,
             mpv::mpv_set_track,
-            mpv::mpv_snapshot
+            mpv::mpv_snapshot,
+            library::library_add_folder,
+            library::library_folders,
+            library::library_remove_folder,
+            library::library_rescan,
+            library::library_cancel_scan,
+            library::library_scan_status,
+            library::library_list,
+            library::library_continue,
+            library::library_remove_item,
+            library::library_note_play,
+            library::library_note_progress,
+            library::library_stats,
+            library::library_reveal
         ])
         .setup(|app| {
             // Window materials, applied before the main window is shown.
@@ -141,6 +156,20 @@ pub fn run() {
                 }
                 if let Some(s) = app.get_webview_window("splashscreen") {
                     apply_effect(&s, mica);
+                }
+            }
+            // Phase 2: SQLite media library (opened lazily; no scan at boot —
+            // the spec forbids background disk work while idle)
+            if let Ok(data_dir) = app.path().app_data_dir() {
+                let _ = std::fs::create_dir_all(&data_dir);
+                let thumbs = data_dir.join("thumbs");
+                let _ = std::fs::create_dir_all(&thumbs);
+                let db_path = data_dir.join("library.db");
+                match library::open_db(&db_path) {
+                    Ok(conn) => {
+                        app.manage(library::LibraryState::new(conn, db_path, thumbs));
+                    }
+                    Err(e) => eprintln!("OMP library: db open failed: {e}"),
                 }
             }
             Ok(())

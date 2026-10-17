@@ -110,4 +110,19 @@ pub fn mpv_snapshot() -> Option<String> {
     None
 }
 
+/* Phase 2 probe — headless libmpv metadata; real impl in mpv.rs (windows). */
+pub(crate) struct ProbeMeta {
+    pub duration: f64,
+    pub width: i64,
+    pub height: i64,
+    pub video_codec: String,
+    pub audio_codec: String,
+    pub container: String,
+    pub thumb: bool,
+}
+
+pub(crate) fn probe_media(_path: &str, _thumb_dir: Option<&std::path::Path>) -> Option<ProbeMeta> {
+    None
+}
+
 pub fn shutdown_all() {}

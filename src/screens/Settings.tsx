@@ -1,10 +1,14 @@
-import { useState, useSyncExternalStore } from "react";
+import { useState, useEffect, useSyncExternalStore } from "react";
 import { Icon } from "../components/Icon";
 import { toast } from "../components/Toast";
 import type { Settings } from "../lib/store";
 import { APP_VERSION, isTauri } from "../lib/tauri";
 import { navigate } from "../lib/router";
 import { engineStore, initEngine } from "../lib/engine";
+import {
+  getStats, rescan as libRescan, cancelScan, onScanEvent,
+  type LibraryStats,
+} from "../lib/library";
 
 function Switch({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
   return (
@@ -16,8 +20,19 @@ function Switch({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
 }
 
 export function Settings({ settings, update }: { settings: Settings; update: (p: Partial<Settings>) => void }) {
-  const [scanning, setScanning] = useState(false);
+  const [stats, setStats] = useState<LibraryStats | null>(null);
   const eng = useSyncExternalStore(engineStore.sub, engineStore.get);
+
+  // live SQLite stats + scan status
+  useEffect(() => {
+    void getStats().then(setStats);
+    return onScanEvent((e) => {
+      if (e.phase === "done") void getStats().then(setStats);
+      else setStats((s) => (s ? { ...s, scanning: true } : s));
+    });
+  }, []);
+
+  const scanning = !!stats?.scanning;
 
   const setEngine = (pref: "auto" | "mpv" | "web") => {
     update({ engine: pref });
@@ -28,12 +43,8 @@ export function Settings({ settings, update }: { settings: Settings; update: (p:
     });
   };
 
-  const rescan = () => {
-    setScanning(true);
-    setTimeout(() => {
-      setScanning(false);
-      toast("Library scan complete — incremental, cancellable (Phase 2 brings the real scanner)", "ok");
-    }, 1400);
+  const rescan = async () => {
+    if (await libRescan()) toast("Rescan started — incremental and cancellable", "info");
   };
 
   return (
@@ -111,6 +122,18 @@ export function Settings({ settings, update }: { settings: Settings; update: (p:
       </div>
 
       <div className="section-label">Playback</div>
+      {isTauri && !eng.available && (
+        <div className="card engine-warn">
+          <span className="icon-btn" style={{ color: "var(--warn, #ffb454)" }}><Icon name="alert" /></span>
+          <div className="row-main">
+            <div className="row-title">Native mpv engine not detected</div>
+            <div className="row-desc">
+              This install is missing the bundled engine, so playback falls back to WebView2 (higher CPU).
+              Re-run the latest installer — it closes OMP and repairs locked files automatically.
+            </div>
+          </div>
+        </div>
+      )}
       <div className="card">
         <div className="row">
           <span className="icon-btn"><Icon name="rocket" /></span>
@@ -176,17 +199,27 @@ export function Settings({ settings, update }: { settings: Settings; update: (p:
           <span className="icon-btn"><Icon name="folder" /></span>
           <div className="row-main">
             <div className="row-title">Scan folders</div>
-            <div className="row-desc">Incremental, cancellable — never blocks playback</div>
+            <div className="row-desc">Incremental, cancellable — never blocks playback · manage folders in the Library screen</div>
           </div>
-          {scanning ? <div className="spinner" /> : <button className="btn sm" onClick={rescan}><Icon name="rotate" size={14} /> Rescan</button>}
+          {scanning ? (
+            <button className="btn sm" onClick={() => { void cancelScan(); toast("Cancelling scan…", "info"); }}>
+              <Icon name="close" size={14} /> Cancel
+            </button>
+          ) : (
+            <button className="btn sm" onClick={() => void rescan()}><Icon name="rotate" size={14} /> Rescan</button>
+          )}
         </div>
         <div className="row">
           <span className="icon-btn"><Icon name="database" /></span>
           <div className="row-main">
             <div className="row-title">Storage</div>
-            <div className="row-desc">SQLite library arrives in Phase 2 · settings use local storage today</div>
+            <div className="row-desc">
+              {stats
+                ? `SQLite library · ${stats.videos} video${stats.videos === 1 ? "" : "s"} · ${stats.audio} track${stats.audio === 1 ? "" : "s"} · ${stats.thumbs} thumbnail${stats.thumbs === 1 ? "" : "s"} · ${stats.folders} folder${stats.folders === 1 ? "" : "s"}`
+                : "SQLite library — stored locally"}
+            </div>
           </div>
-          <span className="badge">12 items indexed</span>
+          <button className="btn sm" onClick={() => navigate("library")}><Icon name="grid" size={14} /> Open</button>
         </div>
       </div>
 

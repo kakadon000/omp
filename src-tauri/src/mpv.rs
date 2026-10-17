@@ -245,7 +245,7 @@ unsafe fn load_api() -> Option<MpvApi> {
 
 static API: OnceLock<Option<MpvApi>> = OnceLock::new();
 
-fn api() -> Option<&'static MpvApi> {
+pub(crate) fn api() -> Option<&'static MpvApi> {
     API.get_or_init(|| unsafe { load_api() }).as_ref()
 }
 
@@ -806,4 +806,166 @@ pub fn mpv_snapshot() -> Option<String> {
         command(a, inst.h.0, &["screenshot-to-file", &target, "subtitles"]).is_ok()
     })?;
     Some(target)
+}
+
+/* ------------------------------------------------------------------ */
+/* Headless metadata probe (Phase 2 library)                           */
+/*                                                                     */
+/* Uses a THROWAWAY libmpv instance with vo=image / ao=null:           */
+/*   * demux open  → FILE_LOADED   → duration, tracks, video-params    */
+/*   * 1 decoded frame at ~25% → vo=image writes the thumbnail         */
+/* No window, no audio, no network. Zero impact on live playback —     */
+/* this runs on the library scanner thread, not the playback engine.   */
+/* ------------------------------------------------------------------ */
+
+pub(crate) struct ProbeMeta {
+    pub duration: f64,
+    pub width: i64,
+    pub height: i64,
+    pub video_codec: String,
+    pub audio_codec: String,
+    pub container: String,
+    /// true when a thumbnail image was written into `thumb_dir`
+    pub thumb: bool,
+}
+
+#[cfg(windows)]
+pub(crate) fn probe_media(path: &str, thumb_dir: Option<&Path>) -> Option<ProbeMeta> {
+    let a = api()?;
+    let want_thumb = thumb_dir.is_some();
+    if want_thumb {
+        let _ = std::fs::create_dir_all(thumb_dir.unwrap());
+    }
+    let h = unsafe { (a.create)() };
+    if h.is_null() {
+        return None;
+    }
+    let mut out = None;
+    unsafe {
+        let mut opts: Vec<(&str, String)> = vec![
+            ("vo", if want_thumb { "image" } else { "null" }.into()),
+            ("ao", "null".into()),
+            ("frames", "1".into()),
+            ("start", "+25%".into()),
+            ("hwdec", "no".into()),
+            ("pause", "no".into()),
+            ("terminal", "no".into()),
+            ("msg-level", "all=error".into()),
+            ("keep-open", "no".into()),
+            ("osc", "no".into()),
+            ("input-default-bindings", "no".into()),
+            ("input-vo-keyboard", "no".into()),
+            ("ytdl", "no".into()),
+        ];
+        if let Some(dir) = thumb_dir {
+            opts.push(("vo-image-outdir", dir.to_string_lossy().into_owned()));
+            opts.push(("vo-image-format", "jpg".into()));
+            opts.push(("vo-image-quality", "86".into()));
+        }
+        let mut ok = true;
+        for (k, v) in &opts {
+            let cs = CString::new(*k).unwrap();
+            let vs = CString::new(v.as_str()).unwrap();
+            if (a.set_option_string)(h, cs.as_ptr(), vs.as_ptr()) != 0 {
+                // vo=image unsupported on this build → degrade to vo=null but keep probing
+                if *k == "vo" {
+                    let cs2 = CString::new("vo").unwrap();
+                    let vs2 = CString::new("null").unwrap();
+                    let _ = (a.set_option_string)(h, cs2.as_ptr(), vs2.as_ptr());
+                }
+                if *k == "ao" {
+                    ok = false;
+                }
+            }
+        }
+        if ok && (a.initialize)(h) == 0 {
+            let path_c = CString::new(path).ok()?;
+            let cmd = CString::new("loadfile").unwrap();
+            let rep = CString::new("replace").unwrap();
+            let args = [*cmd.as_ptr(), path_c.as_ptr(), rep.as_ptr(), std::ptr::null()];
+            let _ = (a.command)(h, args.as_ptr());
+
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(25);
+            let mut duration = 0f64;
+            let mut width = 0i64;
+            let mut height = 0i64;
+            let mut vcodec = String::new();
+            let mut acodec = String::new();
+            let mut container = String::new();
+            loop {
+                if std::time::Instant::now() > deadline {
+                    break;
+                }
+                let ev = (a.wait_event)(h, 0.25);
+                if ev.is_null() {
+                    continue;
+                }
+                match (*ev).event_id {
+                    EV_FILE_LOADED => {
+                        duration = get_prop_string(a, h, "duration")
+                            .and_then(|s| s.parse::<f64>().ok())
+                            .unwrap_or(0.0);
+                        if let Ok(v) = get_prop_string(a, h, "video-params")
+                            .unwrap_or_default()
+                            .parse::<serde_json::Value>()
+                        {
+                            width = v.get("w").and_then(|x| x.as_i64()).unwrap_or(0);
+                            height = v.get("h").and_then(|x| x.as_i64()).unwrap_or(0);
+                        }
+                        if let Ok(tracks) = serde_json::from_str::<serde_json::Value>(
+                            &get_prop_string(a, h, "track-list").unwrap_or_default(),
+                        ) {
+                            if let Some(arr) = tracks.as_array() {
+                                for t in arr {
+                                    let ty = t.get("type").and_then(|x| x.as_str()).unwrap_or("");
+                                    let codec =
+                                        t.get("codec").and_then(|x| x.as_str()).unwrap_or("");
+                                    if ty == "video" && vcodec.is_empty() && codec != "mjpeg" && codec != "png" {
+                                        vcodec = codec.to_string();
+                                    }
+                                    if ty == "audio" && acodec.is_empty() {
+                                        acodec = codec.to_string();
+                                    }
+                                }
+                            }
+                        }
+                        container = get_prop_string(a, h, "file-format").unwrap_or_default();
+                    }
+                    EV_END_FILE | EV_SHUTDOWN => break,
+                    _ => {}
+                }
+            }
+            let mut thumb = false;
+            if want_thumb {
+                if let Some(dir) = thumb_dir {
+                    // vo=image writes exactly one jpg for our frames=1 run
+                    if let Ok(entries) = std::fs::read_dir(dir) {
+                        for e in entries.flatten() {
+                            let p = e.path();
+                            if p.extension().and_then(|x| x.to_str()) == Some("jpg") {
+                                thumb = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+            out = Some(ProbeMeta {
+                duration,
+                width,
+                height,
+                video_codec: vcodec,
+                audio_codec: acodec,
+                container,
+                thumb,
+            });
+        }
+        (a.terminate_destroy)(h);
+    }
+    out
+}
+
+#[cfg(not(windows))]
+pub(crate) fn probe_media(_path: &str, _thumb_dir: Option<&Path>) -> Option<ProbeMeta> {
+    None
 }
