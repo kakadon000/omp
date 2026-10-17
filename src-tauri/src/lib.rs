@@ -19,17 +19,12 @@ fn windows_build() -> u32 {
 /// Rule from the spec: detect the environment, never assume both render the same.
 #[cfg(windows)]
 fn apply_effect(window: &tauri::webview::WebviewWindow, mica: bool) {
-    use tauri::utils::config::{WindowEffect, WindowEffectsConfig};
-    let effects = vec![if mica { WindowEffect::Mica } else { WindowEffect::Acrylic }];
+    use tauri::window::{Effect, EffectsBuilder};
     // If the requested material is unsupported, fall back silently —
     // the CSS layer already ships a translucent fallback.
-    if window.set_effects(WindowEffectsConfig { effects, state: None, radius: None, color: None }).is_err() && mica {
-        let _ = window.set_effects(WindowEffectsConfig {
-            effects: vec![WindowEffect::Acrylic],
-            state: None,
-            radius: None,
-            color: None,
-        });
+    let effect = if mica { Effect::Mica } else { Effect::Acrylic };
+    if window.set_effects(EffectsBuilder::new().effect(effect).build()).is_err() && mica {
+        let _ = window.set_effects(EffectsBuilder::new().effect(Effect::Acrylic).build());
     }
 }
 
