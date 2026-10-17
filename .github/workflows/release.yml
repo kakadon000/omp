@@ -45,9 +45,11 @@ jobs:
           Write-Host "Downloading $($asset.name)"
           Invoke-WebRequest -Uri $asset.browser_download_url -OutFile mpv-dev.7z -Headers $headers
           7z x mpv-dev.7z -ompvdev | Out-Null
-          $dll = Get-ChildItem -Recurse -Filter mpv-2.dll mpvdev | Select-Object -First 1
-          if (-not $dll) { throw "mpv-2.dll not found in mpv-dev archive" }
+          # zhongfly builds ship the engine as libmpv-2.dll (flat archive)
+          $dll = Get-ChildItem -Recurse -Filter *.dll mpvdev | Select-Object -First 1
+          if (-not $dll) { throw "no dll found in mpv-dev archive" }
           Copy-Item $dll.FullName src-tauri/resources/mpv-2.dll
+          Write-Host "Engine dll: $($dll.Name) ($([math]::Round($dll.Length/1MB,1)) MB)"
           Write-Host "Staged resources:"
           Get-ChildItem -Recurse src-tauri/resources | Select-Object FullName, Length
 
