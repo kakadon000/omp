@@ -157,7 +157,7 @@ struct MpvEventProperty {
     data: *mut c_void,
 }
 
-struct MpvApi {
+pub(crate) struct MpvApi {
     create: unsafe extern "C" fn() -> *mut MpvHandle,
     initialize: unsafe extern "C" fn(*mut MpvHandle) -> i32,
     terminate_destroy: unsafe extern "C" fn(*mut MpvHandle),
