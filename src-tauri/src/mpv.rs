@@ -882,7 +882,7 @@ pub(crate) fn probe_media(path: &str, thumb_dir: Option<&Path>) -> Option<ProbeM
             let path_c = CString::new(path).ok()?;
             let cmd = CString::new("loadfile").unwrap();
             let rep = CString::new("replace").unwrap();
-            let args = [*cmd.as_ptr(), path_c.as_ptr(), rep.as_ptr(), std::ptr::null()];
+            let args = [cmd.as_ptr(), path_c.as_ptr(), rep.as_ptr(), std::ptr::null()];
             let _ = (a.command)(h, args.as_ptr());
 
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(25);
