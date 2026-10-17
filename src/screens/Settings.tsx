@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { Icon } from "../components/Icon";
 import { toast } from "../components/Toast";
 import type { Settings } from "../lib/store";
 import { APP_VERSION, isTauri } from "../lib/tauri";
 import { navigate } from "../lib/router";
+import { engineStore, initEngine } from "../lib/engine";
 
 function Switch({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
   return (
@@ -16,6 +17,16 @@ function Switch({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
 
 export function Settings({ settings, update }: { settings: Settings; update: (p: Partial<Settings>) => void }) {
   const [scanning, setScanning] = useState(false);
+  const eng = useSyncExternalStore(engineStore.sub, engineStore.get);
+
+  const setEngine = (pref: "auto" | "mpv" | "web") => {
+    update({ engine: pref });
+    void initEngine(pref).then((info) => {
+      if (pref !== "web" && !info.available) {
+        toast("Native mpv engine not found in this install — staying on WebView", "info");
+      }
+    });
+  };
 
   const rescan = () => {
     setScanning(true);
@@ -101,6 +112,28 @@ export function Settings({ settings, update }: { settings: Settings; update: (p:
 
       <div className="section-label">Playback</div>
       <div className="card">
+        <div className="row">
+          <span className="icon-btn"><Icon name="rocket" /></span>
+          <div className="row-main">
+            <div className="row-title">Playback engine</div>
+            <div className="row-desc">
+              {isTauri
+                ? eng.kind === "mpv"
+                  ? `Native mpv active${eng.version ? ` · libmpv API ${eng.version}` : ""} — VLC-grade CPU, every codec`
+                  : eng.available
+                    ? "WebView2 — native mpv available, pick Auto or mpv to enable"
+                    : "WebView2 — native engine not bundled in this install"
+                : "WebView2 — the web demo always uses the browser engine"}
+            </div>
+          </div>
+          <div className="seg">
+            {(["auto", "mpv", "web"] as const).map((m) => (
+              <button key={m} className={settings.engine === m ? "on" : ""} onClick={() => setEngine(m)}>
+                {m === "auto" ? "Auto" : m === "mpv" ? "mpv" : "WebView"}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="row">
           <span className="icon-btn"><Icon name="rocket" /></span>
           <div className="row-main">

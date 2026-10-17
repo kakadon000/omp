@@ -4,6 +4,13 @@
 
 use tauri::Manager;
 
+#[cfg(windows)]
+#[path = "mpv.rs"]
+mod mpv;
+#[cfg(not(windows))]
+#[path = "mpv_stub.rs"]
+mod mpv;
+
 /// Detect the Windows build number from the OS plugin (e.g. "10.0.22631").
 #[cfg(windows)]
 fn windows_build() -> u32 {
@@ -102,7 +109,27 @@ pub fn run() {
             win_min,
             win_max_toggle,
             win_close,
-            shell_info
+            shell_info,
+            mpv::mpv_status,
+            mpv::mpv_attach,
+            mpv::mpv_detach,
+            mpv::mpv_set_rect,
+            mpv::mpv_load,
+            mpv::mpv_stop,
+            mpv::mpv_toggle_pause,
+            mpv::mpv_set_paused,
+            mpv::mpv_seek,
+            mpv::mpv_set_speed,
+            mpv::mpv_set_volume,
+            mpv::mpv_set_muted,
+            mpv::mpv_set_eq,
+            mpv::mpv_set_transform,
+            mpv::mpv_set_ab,
+            mpv::mpv_set_delays,
+            mpv::mpv_sub_visibility,
+            mpv::mpv_sub_add,
+            mpv::mpv_set_track,
+            mpv::mpv_snapshot
         ])
         .setup(|app| {
             // Window materials, applied before the main window is shown.
@@ -118,6 +145,12 @@ pub fn run() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running OMP");
+        .build(tauri::generate_context!())
+        .expect("error while building OMP")
+        .run(|_app, event| {
+            // release the native engine + video surface cleanly
+            if let tauri::RunEvent::Exit = event {
+                mpv::shutdown_all();
+            }
+        });
 }

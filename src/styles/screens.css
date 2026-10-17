@@ -157,6 +157,25 @@ html[data-win="10"] .sidebar { background: var(--bg-solid); }
   overflow: hidden;
 }
 :root[data-theme="light"] .player-stage { background: rgba(20, 22, 30, 0.9); }
+
+/* ===== native mpv engine: the transparent tunnel =========================
+   Video decodes + renders in a native mpv surface that sits BELOW the
+   transparent webview (DWM composites them) — VLC-grade CPU, zero CSS
+   filters. While the native engine is attached (html.mpv-live), every
+   layer stacking over the stage rect must be fully transparent, or the
+   video would be dimmed by that layer's alpha. */
+html.mpv-live body { background: transparent; }
+.player-shell[data-engine="mpv"],
+.player-shell[data-engine="mpv"] .player-stage { background: transparent; }
+:root[data-theme="light"] .player-shell[data-engine="mpv"] .player-stage { background: transparent; }
+/* chrome keeps its own solid surface so raw Mica doesn't wash it out */
+html.mpv-live .player-bar { background: rgba(14, 15, 20, 0.94); }
+html.mpv-live .player-queue { background: var(--bg-solid); }
+html.mpv-live .stage-big-play { backdrop-filter: none; } /* blur over the native surface is wasted work */
+
+/* perf: while actually playing, kill every expensive effect inside the
+   player (blurs, transitions, shadows) — they repaint per video frame */
+.player-shell[data-playing="1"] .stage-big-play { transition: none; }
 .player-stage video { max-width: 100%; max-height: 100%; width: 100%; height: 100%; object-fit: contain; }
 .player-stage video[data-aspect="fill"] { object-fit: cover; }
 .player-stage video[data-aspect="stretch"] { object-fit: fill; }

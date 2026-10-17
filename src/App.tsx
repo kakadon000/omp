@@ -6,6 +6,7 @@ import { ContextMenuHost } from "./components/ContextMenu";
 import { ShortcutsModal, SHORTCUT_GROUPS } from "./components/ShortcutsModal";
 import { useRoute, navigate, type Route } from "./lib/router";
 import { getShellInfo, invoke, isTauri } from "./lib/tauri";
+import { initEngine } from "./lib/engine";
 import {
   loadSettings, saveSettings, applySettings,
   type Settings,
@@ -39,6 +40,7 @@ export default function App() {
   // boot: apply settings, ask the shell for OS info, close native splash
   useEffect(() => {
     applySettings(settings);
+    void initEngine(settings.engine); // resolve mpv availability before the Player mounts
     getShellInfo().then((info) => {
       if (info && info.win !== "other") document.documentElement.dataset.win = info.win;
     });

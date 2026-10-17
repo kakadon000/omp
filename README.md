@@ -27,6 +27,34 @@ distinctive, not into reinventing video decoding.
 - **Theme Studio** — dark/light/system, five tasteful accents, adjustable
   transparency, Reduced Effects for low-end PCs.
 
+## What's new in v0.3.0 — the native mpv engine
+
+- **VLC-grade CPU, for real this time** — OMP now embeds **libmpv** (the same
+  engine core mpv/VLC-class players use) as the native playback engine. Video
+  decodes with hardware acceleration (D3D11VA) and renders on its own GPU
+  surface *below* the transparent UI — measured CPU for normal playback drops
+  from ~30-37% (WebView path) to a small fraction of that on the same files.
+- **Color adjustments no longer eat the PC** — brightness / contrast /
+  saturation / hue are now mpv GPU shader properties (~0% extra CPU) instead of
+  CSS filters that forced Chromium to re-process every single frame (the 48.5%
+  spike). On the WebView fallback engine the filter is now only applied when a
+  value is actually changed from neutral.
+- **Every format. Really.** — the bundled GPL libmpv decodes MKV, HEVC/H.265,
+  AVI, WMV, FLV, TS, and more, with auto-loaded external subtitles
+  (`sub-auto=fuzzy`) and multi-track audio/subtitle menus. The engine streams
+  HTTP(S) media natively too.
+- **Engine selector** — Settings → Playback engine: Auto (default, uses mpv
+  when present), mpv (force native), WebView (compatibility fallback). Stats
+  for nerds shows the live engine and libmpv API version.
+- **WebView engine still improved** — title chip auto-hides while playing and
+  the mouse is idle (windowed too, not just fullscreen), PiP and web-only
+  controls are gated per engine, and the UI stops paying for transitions while
+  frames are playing.
+- **Sane plumbing** — native file dialogs now hand real filesystem paths to
+  mpv; snapshots save natively to Pictures\\OMP; the surface tracks the stage
+  rect across resizes, fullscreen and DPI changes; the engine shuts down
+  cleanly on exit.
+
 ## What's new in v0.2.0 — VLC-grade control
 
 - **Fixed: dead timeline** — the seek bar now uses a proper scrub state

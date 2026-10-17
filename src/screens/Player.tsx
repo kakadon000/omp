@@ -6,9 +6,10 @@ import { toast } from "../components/Toast";
 import { openContextMenu } from "../components/ContextMenu";
 import { customMedia, loadProgress, saveProgress, pushHistory, type Settings } from "../lib/store";
 import { fmtTime, pct } from "../lib/format";
-import { openMediaFile } from "../lib/tauri";
+import { invoke, isTauri, openMediaFile, openSubtitleFile } from "../lib/tauri";
 import { videoQueue, type RepeatMode } from "../lib/videoQueue";
 import { robustSeek } from "../lib/media";
+import { engineStore, onMpvEvent, attachEngine, detachEngine, parseTracks } from "../lib/engine";
 import type { VideoItem } from "../lib/data";
 
 type MenuKind = "speed" | "subs" | "audio" | null;
@@ -41,6 +42,8 @@ export function Player({ settings }: { settings: Settings }) {
 
   const custom = useSyncExternalStore(customMedia.sub, customMedia.get);
   const queue = useSyncExternalStore(videoQueue.sub, videoQueue.get);
+  const eng = useSyncExternalStore(engineStore.sub, engineStore.get);
+  const isMpv = eng.kind === "mpv";
 
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(0);
@@ -73,10 +76,15 @@ export function Player({ settings }: { settings: Settings }) {
   const [jumpOpen, setJumpOpen] = useState(false);
   const [queueOpen, setQueueOpen] = useState(true);
   const [osd, setOsd] = useState<{ id: number; msg: string } | null>(null);
+  const [tracks, setTracks] = useState<{ id: number; type: string; title?: string; lang?: string; codec?: string; default?: boolean }[]>([]);
+  const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
 
   const vid = queue.items[queue.index] ?? queue.items[0];
   const src = custom.url || vid.src;
   const title = custom.url ? custom.name : vid.title;
+  // what the native engine opens: real file path for external files, else the
+  // bundled sample (mpv resolves the basename against the app resources)
+  const loadSrc = custom.path || custom.url || vid.src;
 
   const osdTimer = useRef(0);
   const showOsd = useCallback((msg: string) => {
@@ -109,8 +117,148 @@ export function Player({ settings }: { settings: Settings }) {
     setLoopA(null);
     setLoopB(null);
     setSubDelay(0);
+    setAudioDelay(0);
+    setTracks([]);
+    setDims(null);
     cueSnap.current = null;
   }, [src]);
+
+  /* ---------------- native mpv engine lifecycle ---------------- */
+
+  // attach the video surface + detach on unmount / engine switch
+  useEffect(() => {
+    if (!isTauri || !isMpv) return;
+    let dead = false;
+    void (async () => {
+      const ok = await attachEngine(settings.hwAccel);
+      if (!ok && !dead) {
+        toast("Native engine unavailable — using WebView playback", "info");
+      }
+    })();
+    return () => {
+      dead = true;
+      detachEngine();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMpv]);
+
+  // keep the native surface glued to the stage rect (resize / fullscreen / DPI)
+  const lastRect = useRef("");
+  useEffect(() => {
+    if (!isMpv) return;
+    const push = () => {
+      const el = stageRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const key = [r.left, r.top, r.width, r.height].map((n) => Math.round(n)).join(",");
+      if (key === lastRect.current || r.width < 2 || r.height < 2) return;
+      lastRect.current = key;
+      void invoke("mpv_set_rect", { x: r.left, y: r.top, w: r.width, h: r.height });
+    };
+    push();
+    const ro = new ResizeObserver(push);
+    if (stageRef.current) ro.observe(stageRef.current);
+    window.addEventListener("resize", push);
+    const iv = window.setInterval(push, 800); // covers monitor moves / DPI changes
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", push);
+      window.clearInterval(iv);
+    };
+  }, [isMpv]);
+
+  // mpv mode: load the file (with resume) whenever the source changes
+  useEffect(() => {
+    if (!isMpv || !loadSrc) return;
+    if (!custom.url) {
+      const p = loadProgress()[vid.id];
+      const start = p && p.t > 3 && pct(p.t, p.d) < 97 ? p.t : 0;
+      if (start > 3) toast(`Resumed at ${fmtTime(start)}`, "info");
+      pushHistory({ id: vid.id, kind: "video", name: vid.title, at: Date.now(), thumb: vid.poster });
+      void invoke("mpv_load", { source: loadSrc, start });
+    } else {
+      void invoke("mpv_load", { source: loadSrc, start: 0 });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMpv, loadSrc]);
+
+  // mpv mode: engine events → the same state the web controls bind to
+  useEffect(() => {
+    if (!isMpv) return;
+    return onMpvEvent((e) => {
+      switch (e.kind) {
+        case "tick": {
+          setTime(e.t);
+          const now = Date.now();
+          if (!custom.url && now - lastSave.current > 2000) {
+            lastSave.current = now;
+            saveProgress(vid.id, e.t, dur);
+          }
+          break;
+        }
+        case "duration":
+          setDur(e.d);
+          break;
+        case "loaded": {
+          setDur(e.d ?? 0);
+          setTracks(parseTracks(e.tracks ?? "").map((t) => ({
+            id: t.id, type: t.type, title: t.title, lang: t.lang, codec: t.codec,
+          })));
+          setDims(e.vw ? { w: e.vw, h: e.vh } : null);
+          break;
+        }
+        case "pause":
+          setPlaying(!e.paused);
+          break;
+        case "ended": {
+          if (custom.url) break;
+          if (queue.repeat === "one") {
+            void invoke("mpv_seek", { t: 0 });
+            void invoke("mpv_set_paused", { v: false });
+          } else {
+            saveProgress(vid.id, 0, 0);
+            const nxt = videoQueue.next(false);
+            if (!nxt) setPlaying(false);
+          }
+          break;
+        }
+        case "file-error":
+          if (e.msg && e.msg.includes("stopped")) break;
+          toast(`Playback failed: ${e.msg ?? "unknown error"}`, "err");
+          break;
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMpv, custom.url, dur, queue.repeat, vid.id]);
+
+  // html.mpv-live: every layer over the stage turns transparent so the native
+  // surface (rendering BELOW the webview) shows through
+  useEffect(() => {
+    document.documentElement.classList.toggle("mpv-live", isMpv);
+    return () => document.documentElement.classList.remove("mpv-live");
+  }, [isMpv]);
+
+  // engine-scoped transforms + adjustments (GPU-side, ~zero CPU cost)
+  useEffect(() => {
+    if (!isMpv) return;
+    void invoke("mpv_set_transform", { aspect, zoom, rotate: rotation });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMpv, aspect, zoom, rotation]);
+  useEffect(() => {
+    if (!isMpv) return;
+    void invoke("mpv_set_eq", {
+      b: adjust.brightness - 100,
+      c: adjust.contrast - 100,
+      s: adjust.saturate - 100,
+      h: adjust.hue,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMpv, adjust]);
+  useEffect(() => {
+    if (!isMpv) return;
+    void invoke("mpv_set_speed", { v: rate });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMpv, rate]);
 
   // apply rate
   useEffect(() => {
@@ -158,54 +306,94 @@ export function Player({ settings }: { settings: Settings }) {
   };
 
   const setVolume = (val: number) => {
+    const target = clamp(val, 0, 2);
+    setVol(target);
+    setMuted(target === 0);
+    if (isMpv) {
+      // native: volume 0..200 with no WebAudio graph needed
+      void invoke("mpv_set_volume", { v: target * 100 });
+      void invoke("mpv_set_muted", { v: target === 0 });
+      showOsd(target === 0 ? "Muted" : `Volume ${Math.round(target * 100)}%`);
+      return;
+    }
     const v = videoRef.current;
-    let target = clamp(val, 0, 2);
-    if (target > 1) {
+    let t2 = target;
+    if (t2 > 1) {
       if (!canBoost(src)) {
-        target = 1;
+        t2 = 1;
         if (!boostWarned.current) {
           boostWarned.current = true;
           toast("Volume boost needs a same-origin file — capped at 100%", "info");
         }
       } else if (v) {
         const g = ensureGraph(v, src);
-        if (!g) target = 1;
+        if (!g) t2 = 1;
       }
     }
-    setVol(target);
-    setMuted(target === 0);
+    setVol(t2);
+    setMuted(t2 === 0);
     if (v) {
       const g = webAudio.current;
-      if (target > 1 && g) {
+      if (t2 > 1 && g) {
         v.volume = 1;
         v.muted = false;
-        g.gain.gain.value = target;
+        g.gain.gain.value = t2;
       } else {
         if (g) g.gain.gain.value = 1;
-        v.volume = target;
-        v.muted = target === 0;
+        v.volume = t2;
+        v.muted = t2 === 0;
       }
     }
-    showOsd(target === 0 ? "Muted" : `Volume ${Math.round(target * 100)}%`);
+    showOsd(t2 === 0 ? "Muted" : `Volume ${Math.round(t2 * 100)}%`);
   };
 
   const toggleMute = () => {
+    const next = !muted;
+    if (isMpv) {
+      void invoke("mpv_set_muted", { v: next });
+      setMuted(next);
+      showOsd(next ? "Muted" : `Volume ${Math.round(vol * 100)}%`);
+      return;
+    }
     const v = videoRef.current;
     if (!v) return;
-    const next = !muted;
     v.muted = next;
     setMuted(next);
     showOsd(next ? "Muted" : `Volume ${Math.round(vol * 100)}%`);
   };
 
   const togglePlay = useCallback(() => {
+    if (isMpv) {
+      void invoke("mpv_toggle_pause");
+      return;
+    }
     const v = videoRef.current;
     if (!v) return;
     if (v.paused) v.play().catch(() => {});
     else v.pause();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isMpv]);
+
+  /** absolute seek through whichever engine is live */
+  const doSeek = (target: number) => {
+    if (isMpv) {
+      void invoke("mpv_seek", { t: Math.max(0, target) });
+      setTime(Math.max(0, target));
+      return;
+    }
+    const v = videoRef.current;
+    if (!v) return;
+    void robustSeek(v, target, src);
+    setTime(v.currentTime);
+  };
 
   const stopPlayback = () => {
+    if (isMpv) {
+      void invoke("mpv_stop");
+      setTime(0);
+      showOsd("Stopped");
+      return;
+    }
     const v = videoRef.current;
     if (!v) return;
     v.pause();
@@ -215,15 +403,39 @@ export function Player({ settings }: { settings: Settings }) {
   };
 
   const seekBy = useCallback((delta: number, msg?: string) => {
+    if (isMpv) {
+      void invoke("mpv_seek", { t: delta, rel: true });
+      setTime((t) => Math.max(0, t + delta));
+      if (msg) showOsd(msg);
+      return;
+    }
     const v = videoRef.current;
     if (!v || !Number.isFinite(v.duration)) return;
     void robustSeek(v, v.currentTime + delta, src);
     setTime(v.currentTime);
     if (msg) showOsd(msg);
-  }, [showOsd, src]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showOsd, src, isMpv]);
 
-  // ---- A-B loop ------------------------------------------------------------
+  // ---- A-B loop (native ab-loop on the mpv engine) -------------------------
   const abLoop = () => {
+    if (isMpv) {
+      if (loopA === null) {
+        setLoopA(time);
+        showOsd(`A-B loop: start ${fmtTime(time)}`);
+      } else if (loopB === null) {
+        if (time <= loopA) { setLoopA(null); void invoke("mpv_set_ab", { a: null, b: null }); showOsd("A-B loop cleared"); return; }
+        setLoopB(time);
+        void invoke("mpv_set_ab", { a: loopA, b: time });
+        showOsd(`A-B loop on (${fmtTime(loopA)} → ${fmtTime(time)})`);
+      } else {
+        setLoopA(null);
+        setLoopB(null);
+        void invoke("mpv_set_ab", { a: null, b: null });
+        showOsd("A-B loop off");
+      }
+      return;
+    }
     const v = videoRef.current;
     if (!v) return;
     if (loopA === null) {
@@ -240,8 +452,15 @@ export function Player({ settings }: { settings: Settings }) {
     }
   };
 
-  // ---- snapshot --------------------------------------------------------------
+  // ---- snapshot (native screenshot on mpv, canvas on the web engine) --------
   const snapshot = () => {
+    if (isMpv) {
+      void invoke<string>("mpv_snapshot").then((p) => {
+        if (p) toast(`Snapshot saved — ${p}`, "ok");
+        else toast("Snapshot failed", "err");
+      });
+      return;
+    }
     const v = videoRef.current;
     if (!v || !v.videoWidth) { toast("Nothing to capture yet", "err"); return; }
     try {
@@ -267,8 +486,15 @@ export function Player({ settings }: { settings: Settings }) {
     }
   };
 
-  // ---- subtitle delay (shifts the loaded WebVTT cues) -----------------------
+  // ---- subtitle delay (cue shifting on web, native sub-delay on mpv) --------
   const bumpSubDelay = (d: number) => {
+    if (isMpv) {
+      const next = clamp(+(subDelay + d).toFixed(1), -30, 30);
+      setSubDelay(next);
+      void invoke("mpv_set_delays", { sub: next, audio: audioDelay });
+      showOsd(`Subtitle delay ${next > 0 ? "+" : ""}${next}s`);
+      return;
+    }
     const v = videoRef.current;
     if (!subs) { toast("Turn subtitles on first (C)", "info"); return; }
     const tt = v?.textTracks?.[0];
@@ -291,14 +517,20 @@ export function Player({ settings }: { settings: Settings }) {
     showOsd(`Subtitle delay ${next > 0 ? "+" : ""}${next}s`);
   };
 
-  // ---- audio delay (WebAudio DelayNode; needs the boost graph) --------------
+  // ---- audio delay (native audio-delay on mpv, WebAudio on web) -------------
   const bumpAudioDelay = (d: number) => {
+    const next = clamp(+(audioDelay + d).toFixed(1), 0, 10);
+    if (isMpv) {
+      setAudioDelay(next);
+      void invoke("mpv_set_delays", { sub: subDelay, audio: next });
+      showOsd(next === 0 ? "Audio delay reset" : `Audio delay +${next}s`);
+      return;
+    }
     const v = videoRef.current;
     if (!v) return;
     if (!canBoost(src)) { toast("Audio delay needs a same-origin file", "info"); return; }
     const g = ensureGraph(v, src);
     if (!g) { toast("Audio engine unavailable", "err"); return; }
-    const next = clamp(+(audioDelay + d).toFixed(1), 0, 10);
     g.delay.delayTime.value = next;
     setAudioDelay(next);
     showOsd(next === 0 ? "Audio delay reset" : `Audio delay +${next}s`);
@@ -318,10 +550,9 @@ export function Player({ settings }: { settings: Settings }) {
     return () => document.removeEventListener("fullscreenchange", on);
   }, []);
 
-  // auto-hide controls while fullscreen + playing
+  // auto-hide chrome while playing + mouse idle (fullscreen AND windowed)
   const idleTimer = useRef(0);
   useEffect(() => {
-    if (!fs) { setFsIdle(false); return; }
     const bump = () => {
       setFsIdle(false);
       window.clearTimeout(idleTimer.current);
@@ -335,9 +566,10 @@ export function Player({ settings }: { settings: Settings }) {
       window.removeEventListener("pointerdown", bump);
       window.clearTimeout(idleTimer.current);
     };
-  }, [fs]);
+  }, []);
 
   const togglePip = async () => {
+    if (isMpv) { toast("Picture-in-picture runs on the WebView engine (Settings → Playback engine)", "info"); return; }
     const v = videoRef.current;
     if (!v) return;
     try {
@@ -356,12 +588,37 @@ export function Player({ settings }: { settings: Settings }) {
   const openExternal = async () => {
     const f = await openMediaFile();
     if (!f) return;
-    customMedia.set({ name: f.name, url: f.url });
+    customMedia.set({ name: f.name, url: f.url, path: f.path });
     pushHistory({ id: `custom:${f.name}`, kind: "video", name: f.name, at: Date.now() });
-    toast(`Opened ${f.name}`, "ok");
+    toast(isMpv ? `Opened ${f.name} on the native engine` : `Opened ${f.name}`, "ok");
+  };
+
+  const loadSubFile = async () => {
+    const f = await openSubtitleFile();
+    if (!f) return;
+    if (isMpv && f.path) {
+      void invoke("mpv_sub_add", { path: f.path }).then((ok) => {
+        if (ok) {
+          setSubs(true);
+          void invoke("mpv_sub_visibility", { v: true });
+          toast(`Subtitles: ${f.name}`, "ok");
+        } else {
+          toast("Could not load that subtitle file", "err");
+        }
+      });
+      return;
+    }
+    toast("External subtitle files need the desktop app (mpv engine)", "info");
   };
 
   const toggleSubs = () => {
+    if (isMpv) {
+      const next = !subs;
+      setSubs(next);
+      void invoke("mpv_sub_visibility", { v: next });
+      showOsd(next ? "Subtitles on" : "Subtitles off");
+      return;
+    }
     if (custom.url) { toast("Subtitles for external files arrive with the mpv engine (Phase 1.1)", "info"); return; }
     setSubs((s) => !s);
     showOsd(subs ? "Subtitles off" : "Subtitles on");
@@ -382,6 +639,15 @@ export function Player({ settings }: { settings: Settings }) {
 
   const onSeekInput = (raw: number) => {
     setScrubVal(raw);
+    if (isMpv) {
+      if (dur <= 0) return;
+      const now = performance.now();
+      if (now - lastPreview.current > 130) {
+        lastPreview.current = now;
+        void invoke("mpv_seek", { t: (raw / 1000) * dur });
+      }
+      return;
+    }
     const v = videoRef.current;
     if (!v || !Number.isFinite(v.duration) || dur <= 0) return;
     const now = performance.now();
@@ -394,13 +660,18 @@ export function Player({ settings }: { settings: Settings }) {
   const commitSeek = useCallback(() => {
     setScrubVal((cur) => {
       if (cur === null) return null;
+      if (isMpv) {
+        if (dur > 0) void invoke("mpv_seek", { t: (cur / 1000) * dur });
+        return null;
+      }
       const v = videoRef.current;
       if (v && Number.isFinite(v.duration) && dur > 0) {
         void robustSeek(v, (cur / 1000) * v.duration, src);
       }
       return null;
     });
-  }, [dur, src]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dur, src, isMpv]);
 
   useEffect(() => {
     if (scrubVal === null) return;
@@ -471,16 +742,14 @@ export function Player({ settings }: { settings: Settings }) {
       case "*": eat(); setZoom(1); showOsd("Zoom reset"); break;
       case ",": eat(); seekBy(-1 / 30); break;
       case ".": eat(); seekBy(1 / 30); break;
-      case "Home": eat(); { const v = videoRef.current; if (v) void robustSeek(v, 0, src); } break;
-      case "End": eat(); { const v = videoRef.current; if (v && Number.isFinite(v.duration)) void robustSeek(v, v.duration - 0.1, src); } break;
+      case "Home": eat(); doSeek(0); break;
+      case "End": eat(); doSeek(Math.max(0, (dur || 0) - 0.1)); break;
       case "Escape": setAdjustOpen(false); break;
       default:
         if (/^[0-9]$/.test(k)) {
           eat();
-          const v = videoRef.current;
-          if (v && Number.isFinite(v.duration) && v.duration > 0) {
-            void robustSeek(v, (Number(k) / 10) * v.duration, src);
-            setTime(v.currentTime);
+          if (dur > 0) {
+            doSeek((Number(k) / 10) * dur);
             showOsd(`${Number(k) * 10}%`);
           }
         }
@@ -561,7 +830,7 @@ export function Player({ settings }: { settings: Settings }) {
       },
       { label: "Video adjustments…", icon: "sun", onClick: () => setAdjustOpen((o) => !o) },
       { sep: true },
-      { label: subs ? "Subtitles: On" : "Subtitles: Off", icon: "cc", hint: "C", onClick: toggleSubs, disabled: !!custom.url },
+      { label: subs ? "Subtitles: On" : "Subtitles: Off", icon: "cc", hint: "C", onClick: toggleSubs, disabled: !isMpv && !!custom.url },
       {
         label: "Subtitle delay", icon: "type", disabled: !subs,
         sub: [
@@ -584,7 +853,7 @@ export function Player({ settings }: { settings: Settings }) {
       { label: `Shuffle: ${queue.shuffle ? "On" : "Off"}`, icon: "shuffle", hint: "R", onClick: () => { const on = videoQueue.toggleShuffle(); showOsd(on ? "Shuffle on" : "Shuffle off"); } },
       { sep: true },
       { label: "Take snapshot", icon: "image", hint: "T", onClick: snapshot },
-      { label: "Picture-in-picture", icon: "pip", onClick: () => void togglePip() },
+      { label: "Picture-in-picture", icon: "pip", onClick: () => void togglePip(), disabled: isMpv },
       { label: fs ? "Exit fullscreen" : "Fullscreen", icon: fs ? "exitFullscreen" : "fullscreen", hint: "F", onClick: toggleFullscreen },
       { sep: true },
       { label: "Stats for nerds", icon: "info", hint: "I", onClick: () => setShowStats((s) => !s) },
@@ -609,28 +878,36 @@ export function Player({ settings }: { settings: Settings }) {
     ], v.title);
   };
 
-  // video transform + filters
-  const filterStr = `brightness(${adjust.brightness}%) contrast(${adjust.contrast}%) saturate(${adjust.saturate}%) hue-rotate(${adjust.hue}deg)`;
-  const quality = videoRef.current?.getVideoPlaybackQuality?.();
+  // video transform + filters — the filter string is ONLY applied when the
+  // user actually changed something; a constant filter (even at neutral
+  // values) forces Chromium to re-process every frame → the 48% CPU case
+  const adjustOn = adjust.brightness !== 100 || adjust.contrast !== 100 || adjust.saturate !== 100 || adjust.hue !== 0;
+  const filterStr = !isMpv && adjustOn
+    ? `brightness(${adjust.brightness}%) contrast(${adjust.contrast}%) saturate(${adjust.saturate}%) hue-rotate(${adjust.hue}deg)`
+    : undefined;
+  const quality = !isMpv ? videoRef.current?.getVideoPlaybackQuality?.() : undefined;
+
+  const audioTracks = tracks.filter((t) => t.type === "audio");
 
   return (
-    <div className={`player-shell ${fsIdle ? "fs-idle" : ""}`}>
+    <div className={`player-shell ${fs && fsIdle ? "fs-idle" : ""}`} data-engine={isMpv ? "mpv" : "web"} data-playing={playing ? "1" : "0"}>
       <div className="player-wrap" style={{ flex: 1, display: "flex", minHeight: 0 }}>
         <div
           className="player-stage"
           ref={stageRef}
           onContextMenu={(e) => { e.preventDefault(); stageMenu(e.clientX, e.clientY); }}
         >
-          <video
-            key={src}
-            ref={videoRef}
-            src={src}
-            autoPlay
-            playsInline
-            data-aspect={aspect}
-            style={{ transform: `scale(${zoom}) rotate(${rotation}deg)`, filter: filterStr }}
-            onClick={togglePlay}
-            onDoubleClick={toggleFullscreen}
+          {isMpv ? null : (
+            <video
+              key={src}
+              ref={videoRef}
+              src={src}
+              autoPlay
+              playsInline
+              data-aspect={aspect}
+              style={{ transform: `scale(${zoom}) rotate(${rotation}deg)`, filter: filterStr }}
+              onClick={togglePlay}
+              onDoubleClick={toggleFullscreen}
             onPlay={() => setPlaying(true)}
             onPause={() => setPlaying(false)}
             onTimeUpdate={(e) => {
@@ -676,12 +953,13 @@ export function Player({ settings }: { settings: Settings }) {
               const nxt = videoQueue.next(false);
               if (!nxt) setPlaying(false);
             }}
-            onError={() => toast("This format needs the mpv engine — arrives in Phase 1.1", "info")}
+            onError={() => toast("This format needs the mpv engine — switch in Settings → Playback engine", "info")}
           >
             {subs && !custom.url && (
               <track kind="subtitles" src="./media/sample-subs.vtt" srcLang="en" label="English" default />
             )}
           </video>
+          )}
 
           {!playing && (
             <button className="stage-big-play" onClick={togglePlay} aria-label="Play">
@@ -689,7 +967,7 @@ export function Player({ settings }: { settings: Settings }) {
             </button>
           )}
 
-          <div className={`pc-title ${fsIdle ? "hide" : ""}`}>
+          <div className={`pc-title ${fsIdle && playing ? "hide" : ""}`}>
             <span className="chip"><Icon name="film" /> {title}</span>
           </div>
 
@@ -698,13 +976,14 @@ export function Player({ settings }: { settings: Settings }) {
           {showStats && (
             <div className="stats">
               <div><b>{title}</b></div>
-              <div>Resolution&nbsp;&nbsp;{videoRef.current?.videoWidth ?? "?"}×{videoRef.current?.videoHeight ?? "?"}</div>
+              <div>Engine&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{isMpv ? `mpv (libmpv${eng.version ? ` ${eng.version}` : ""})` : "WebView2"}</div>
+              <div>Resolution&nbsp;&nbsp;{isMpv ? (dims ? `${dims.w}×${dims.h}` : "?") : `${videoRef.current?.videoWidth ?? "?"}×${videoRef.current?.videoHeight ?? "?"}`}</div>
               <div>Position&nbsp;&nbsp;&nbsp;&nbsp;{fmtTime(time)} / {fmtTime(dur)} ({Math.round(pct(time, dur))}%)</div>
               <div>Speed · Vol&nbsp;&nbsp;{rate}× · {Math.round(vol * 100)}%</div>
-              <div>Buffered&nbsp;&nbsp;&nbsp;{Math.round(bufferedPct)}%</div>
+              <div>Buffered&nbsp;&nbsp;&nbsp;{isMpv ? "native demuxer" : `${Math.round(bufferedPct)}%`}</div>
               {quality && <div>Frames&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{quality.totalVideoFrames} decoded · {quality.droppedVideoFrames} dropped</div>}
               <div>Loop&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{loopA !== null ? `A-B (${fmtTime(loopA)}–${fmtTime(loopB ?? dur)})` : queue.repeat}</div>
-              <div className="stats-src">{src}</div>
+              <div className="stats-src">{loadSrc}</div>
             </div>
           )}
 
@@ -813,8 +1092,8 @@ export function Player({ settings }: { settings: Settings }) {
         )}
       </div>
 
-      {/* control bar */}
-      <div className={`player-bar ${fsIdle ? "fs-idle" : ""}`}>
+      {/* control bar — only auto-hides while fullscreen; windowed keeps it */}
+      <div className={`player-bar ${fs && fsIdle ? "fs-idle" : ""}`}>
         <div
           className="seek-wrap"
           onMouseMove={(e) => {
@@ -911,38 +1190,46 @@ export function Player({ settings }: { settings: Settings }) {
           </div>
 
           {/* subtitles menu */}
-          {!custom.url && (
-            <div className="menu-wrap">
-              <button
-                className={`icon-btn tip ${subs ? "on" : ""}`} data-tip="Subtitles (C)" data-tip-up
-                onClick={() => setMenu(menu === "subs" ? null : "subs")}
-                aria-label="Subtitles"
-              >
-                <Icon name="cc" />
-              </button>
-              {menu === "subs" && (
-                <div className="menu up" onMouseLeave={() => setMenu(null)}>
-                  <button className={`menu-item ${!subs ? "sel" : ""}`} onClick={() => { setSubs(false); setMenu(null); }}>
-                    <span className="grow">Off</span>{!subs && <Icon name="check" size={14} />}
-                  </button>
+          <div className="menu-wrap">
+            <button
+              className={`icon-btn tip ${subs ? "on" : ""}`} data-tip="Subtitles (C)" data-tip-up
+              onClick={() => setMenu(menu === "subs" ? null : "subs")}
+              aria-label="Subtitles"
+            >
+              <Icon name="cc" />
+            </button>
+            {menu === "subs" && (
+              <div className="menu up" onMouseLeave={() => setMenu(null)}>
+                <button className={`menu-item ${!subs ? "sel" : ""}`} onClick={() => { setSubs(false); if (isMpv) void invoke("mpv_sub_visibility", { v: false }); setMenu(null); }}>
+                  <span className="grow">Off</span>{!subs && <Icon name="check" size={14} />}
+                </button>
+                {!isMpv && !custom.url && (
                   <button className={`menu-item ${subs ? "sel" : ""}`} onClick={() => { setSubs(true); setMenu(null); }}>
                     <span className="grow">English (sample.vtt)</span>{subs && <Icon name="check" size={14} />}
                   </button>
-                  <div className="menu-sep" />
-                  <button className="menu-item" onClick={() => { bumpSubDelay(-0.5); setMenu(null); }}>
-                    <span className="grow">Delay −0.5s</span><span className="kbd">G</span>
+                )}
+                {isMpv && tracks.filter((t) => t.type === "sub").map((t) => (
+                  <button
+                    key={t.id} className="menu-item"
+                    onClick={() => { void invoke("mpv_set_track", { kind: "sid", id: t.id }); setSubs(true); setMenu(null); }}
+                  >
+                    <span className="grow">{t.title || t.lang || `Track ${t.id}`}{t.codec ? ` (${t.codec})` : ""}</span>
                   </button>
-                  <button className="menu-item" onClick={() => { bumpSubDelay(0.5); setMenu(null); }}>
-                    <span className="grow">Delay +0.5s</span><span className="kbd">H</span>
-                  </button>
-                  <div className="menu-sep" />
-                  <button className="menu-item" onClick={() => toast("External subtitle loading lands in Phase 1.1", "info")}>
-                    <Icon name="plus" size={14} /><span className="grow">Load file…</span>
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
+                ))}
+                <div className="menu-sep" />
+                <button className="menu-item" onClick={() => { bumpSubDelay(-0.5); setMenu(null); }}>
+                  <span className="grow">Delay −0.5s</span><span className="kbd">G</span>
+                </button>
+                <button className="menu-item" onClick={() => { bumpSubDelay(0.5); setMenu(null); }}>
+                  <span className="grow">Delay +0.5s</span><span className="kbd">H</span>
+                </button>
+                <div className="menu-sep" />
+                <button className="menu-item" onClick={() => { void loadSubFile(); setMenu(null); }}>
+                  <Icon name="plus" size={14} /><span className="grow">Load file…</span>
+                </button>
+              </div>
+            )}
+          </div>
 
           {/* audio tracks */}
           <div className="menu-wrap">
@@ -951,18 +1238,31 @@ export function Player({ settings }: { settings: Settings }) {
             </button>
             {menu === "audio" && (
               <div className="menu up" onMouseLeave={() => setMenu(null)}>
-                <button className="menu-item sel">
-                  <span className="grow">Default (AAC 2.0)</span><Icon name="check" size={14} />
-                </button>
+                {isMpv && audioTracks.length > 0 ? (
+                  audioTracks.map((t) => (
+                    <button key={t.id} className="menu-item" onClick={() => { void invoke("mpv_set_track", { kind: "aid", id: t.id }); setMenu(null); }}>
+                      <span className="grow">{t.title || t.lang || `Track ${t.id + 1}`}{t.codec ? ` (${t.codec})` : ""}{t.default ? " · default" : ""}</span>
+                    </button>
+                  ))
+                ) : isMpv ? (
+                  <button className="menu-item" disabled><span className="grow">No audio tracks detected</span></button>
+                ) : (
+                  <button className="menu-item sel">
+                    <span className="grow">Default (AAC 2.0)</span><Icon name="check" size={14} />
+                  </button>
+                )}
+                <div className="menu-sep" />
                 <button className="menu-item" onClick={() => { bumpAudioDelay(0.5); setMenu(null); }}>
                   <span className="grow">Audio delay +0.5s</span><span className="kbd">Alt+K</span>
                 </button>
                 <button className="menu-item" onClick={() => { bumpAudioDelay(-0.5); setMenu(null); }}>
                   <span className="grow">Audio delay −0.5s</span><span className="kbd">Alt+J</span>
                 </button>
-                <button className="menu-item" onClick={() => toast("Multi-track audio arrives with the mpv engine (Phase 1.1)", "info")}>
-                  <span className="grow">External audio…</span>
-                </button>
+                {!isMpv && (
+                  <button className="menu-item" onClick={() => toast("Multi-track audio lives on the mpv engine — switch in Settings", "info")}>
+                    <span className="grow">External audio…</span>
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -975,9 +1275,11 @@ export function Player({ settings }: { settings: Settings }) {
           >
             <Icon name="list" />
           </button>
-          <button className={`icon-btn tip ${pip ? "on" : ""}`} data-tip="Picture-in-picture" data-tip-up onClick={() => void togglePip()} aria-label="Picture in picture">
-            <Icon name="pip" />
-          </button>
+          {!isMpv && (
+            <button className={`icon-btn tip ${pip ? "on" : ""}`} data-tip="Picture-in-picture" data-tip-up onClick={() => void togglePip()} aria-label="Picture in picture">
+              <Icon name="pip" />
+            </button>
+          )}
           <button className="icon-btn tip" data-tip={fs ? "Exit fullscreen (F)" : "Fullscreen (F)"} data-tip-up onClick={toggleFullscreen} aria-label="Fullscreen">
             <Icon name={fs ? "exitFullscreen" : "fullscreen"} />
           </button>
@@ -998,9 +1300,8 @@ export function Player({ settings }: { settings: Settings }) {
                 defaultValue={fmtTime(time)}
                 onKeyDown={(e) => {
                   if (e.key !== "Enter") return;
-                  const v = videoRef.current;
                   const raw = e.currentTarget.value.trim();
-                  if (!v || !Number.isFinite(v.duration)) return;
+                  if (dur <= 0) return;
                   const m = raw.match(/^(?:(\d+):)?(\d{1,2}):(\d{1,2})$/) || (raw.match(/^\d+(\.\d+)?$/) ? [null, null, null, raw] : null);
                   let t = -1;
                   if (m) {
@@ -1009,8 +1310,7 @@ export function Player({ settings }: { settings: Settings }) {
                     else t = Number(m[3]);
                   }
                   if (Number.isFinite(t) && t >= 0) {
-                    v.currentTime = clamp(t, 0, Math.max(0, v.duration - 0.05));
-                    setTime(v.currentTime);
+                    doSeek(clamp(t, 0, Math.max(0, dur - 0.05)));
                     setJumpOpen(false);
                   } else toast("Could not read that time — try 1:30", "err");
                 }}

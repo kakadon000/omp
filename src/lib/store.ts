@@ -11,6 +11,7 @@ export type Settings = {
   transparency: number; // 0..1 — glass blur strength
   effects: EffectsMode;
   hwAccel: boolean;
+  engine: "auto" | "mpv" | "web";
   defaultSpeed: number;
   seekStep: number;
   sidebarRail: boolean;
@@ -23,6 +24,7 @@ const DEFAULTS: Settings = {
   transparency: 0.65,
   effects: "auto",
   hwAccel: true,
+  engine: "auto",
   defaultSpeed: 1,
   seekStep: 10,
   sidebarRail: false,
@@ -179,7 +181,7 @@ if (audio) {
 /* ------------------------- external file (open with…) ------------------------- */
 import { ensureSeekable } from "./media";
 
-export type CustomMedia = { name: string; url: string };
+export type CustomMedia = { name: string; url: string; path?: string };
 export const customMedia = makeStore<CustomMedia>({ name: "", url: "" });
 
 /* ------------------------- progress + history ------------------------- */

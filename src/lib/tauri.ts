@@ -24,9 +24,11 @@ export async function invoke<T = unknown>(
   }
 }
 
-export type OpenedFile = { name: string; url: string } | null;
+export type OpenedFile = { name: string; url: string; path?: string } | null;
 
-/** Open a media file: native dialog in the app, file picker in the browser. */
+/** Open a media file: native dialog in the app, file picker in the browser.
+ *  In the desktop app we ALSO return the real filesystem path — the native
+ *  mpv engine needs it (blob/asset URLs are invisible to libmpv). */
 export async function openMediaFile(): Promise<OpenedFile> {
   if (isTauri) {
     try {
@@ -46,7 +48,7 @@ export async function openMediaFile(): Promise<OpenedFile> {
       if (typeof path !== "string") return null;
       const { convertFileSrc } = await import("@tauri-apps/api/core");
       const name = path.split(/[\\/]/).pop() || "media";
-      return { name, url: convertFileSrc(path) };
+      return { name, url: convertFileSrc(path), path };
     } catch (e) {
       console.warn("dialog failed", e);
       return null;
@@ -96,6 +98,35 @@ export async function openImageFiles(): Promise<OpenedFile> {
   });
 }
 
+/** Pick a subtitle file; the native engine consumes the real path. */
+export async function openSubtitleFile(): Promise<OpenedFile> {
+  if (isTauri) {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const path = await open({
+        multiple: false,
+        filters: [{ name: "Subtitles", extensions: ["srt", "ass", "ssa", "vtt", "sub", "idx", "sup"] }],
+      });
+      if (typeof path !== "string") return null;
+      const name = path.split(/[\\/]/).pop() || "subs";
+      const { convertFileSrc } = await import("@tauri-apps/api/core");
+      return { name, url: convertFileSrc(path), path };
+    } catch {
+      return null;
+    }
+  }
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".srt,.ass,.ssa,.vtt,.sub,text/vtt";
+    input.onchange = () => {
+      const f = input.files?.[0];
+      resolve(f ? { name: f.name, url: URL.createObjectURL(f) } : null);
+    };
+    input.click();
+  });
+}
+
 /** OS / shell info from the Rust side. */
 export async function getShellInfo(): Promise<{
   os: string;
@@ -111,4 +142,4 @@ export async function getShellInfo(): Promise<{
   return info ?? fallback;
 }
 
-export const APP_VERSION = "0.2.0";
+export const APP_VERSION = "0.3.0";
