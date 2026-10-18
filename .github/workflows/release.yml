@@ -73,8 +73,9 @@ jobs:
           Copy-Item $dll.FullName src-tauri/resources/mpv-2.dll
           Write-Host "Engine dll: $($dll.Name) ($([math]::Round($dll.Length/1MB,1)) MB)"
           # 3) bundle ffmpeg for the Phase 4 editor export pipeline
-          # (BtbN release-branch GPL build — libx264 / libvpx-vp9 / libopus all in)
-          $ffurl = "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-release-latest-win64-gpl.zip"
+          # (BtbN stable n8.1 GPL build — libx264 / libvpx-vp9 / libopus all in;
+          #  the old "release-latest" asset name was retired upstream → 404)
+          $ffurl = "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-n8.1-latest-win64-gpl-8.1.zip"
           Invoke-WebRequest -Uri $ffurl -OutFile ffmpeg-bn.zip -Headers @{ "User-Agent" = "omp-ci-build" }
           7z x ffmpeg-bn.zip -offmpeg | Out-Null
           $ffexe = Get-ChildItem -Recurse -Filter ffmpeg.exe offmpeg | Select-Object -First 1
