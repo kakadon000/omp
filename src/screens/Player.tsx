@@ -7,7 +7,7 @@ import { openContextMenu } from "../components/ContextMenu";
 import { customMedia, loadProgress, saveProgress, pushHistory, type Settings } from "../lib/store";
 import { noteProgress as libNote, notePlay as libNotePlay } from "../lib/library";
 import { fmtTime, pct } from "../lib/format";
-import { invoke, isTauri, openMediaFile, openSubtitleFile } from "../lib/tauri";
+import { invoke, isTauri, openMediaFile, openSubtitleFile, APP_VERSION } from "../lib/tauri";
 import { videoQueue, type RepeatMode } from "../lib/videoQueue";
 import { robustSeek } from "../lib/media";
 import { engineStore, onMpvEvent, attachEngine, detachEngine, parseTracks } from "../lib/engine";
@@ -83,6 +83,11 @@ export function Player({ settings }: { settings: Settings }) {
   const [jumpOpen, setJumpOpen] = useState(false);
   const [takeover, setTakeover] = useState(0);
   const [queueOpen, setQueueOpen] = useState(true);
+  // v0.15.0 — the WebView <video> can silently fail (HEVC/AC-3 on machines
+  // where the native engine is down): black stage, zero feedback. This state
+  // powers the honest "can't decode here" rescue card instead.
+  const [vidErr, setVidErr] = useState(false);
+  const [vidRetry, setVidRetry] = useState(0);
   const sleep = useSyncExternalStore(sleepTimer.sub, sleepTimer.get);
   const [osd, setOsd] = useState<{ id: number; msg: string } | null>(null);
   const [tracks, setTracks] = useState<{ id: number; type: string; title?: string; lang?: string; codec?: string; default?: boolean }[]>([]);
@@ -132,8 +137,18 @@ export function Player({ settings }: { settings: Settings }) {
     setAudioDelay(0);
     setTracks([]);
     setDims(null);
+    setVidErr(false);
     cueSnap.current = null;
-  }, [src]);
+    // v0.15.0 — stall watchdog: if the WebView can't even read the header
+    // (unsupported codec/container), loadedmetadata never fires and the user
+    // would stare at a black stage forever. 12s and still no data → rescue card.
+    const w = setTimeout(() => {
+      const v = videoRef.current;
+      if (v && !v.duration && v.readyState < 2) setVidErr(true);
+    }, 12000);
+    return () => clearTimeout(w);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [src, vidRetry]);
 
   /* ---------------- native mpv engine lifecycle ---------------- */
 
@@ -979,7 +994,7 @@ export function Player({ settings }: { settings: Settings }) {
         >
           {isMpv ? null : (
             <video
-              key={src}
+              key={`${src}#${vidRetry}`}
               ref={videoRef}
               src={src}
               autoPlay
@@ -1048,7 +1063,11 @@ export function Player({ settings }: { settings: Settings }) {
               const nxt = videoQueue.next(false);
               if (!nxt) setPlaying(false);
             }}
-            onError={() => toast("This format needs the mpv engine — switch in Settings → Playback engine", "info")}
+            onError={() => {
+              // v0.15.0 — honest rescue card instead of a silent black stage
+              setVidErr(true);
+              toast("This format needs the mpv engine — repair below or switch in Settings → Playback engine", "info");
+            }}
           >
             {subs && !custom.url && (
               <track kind="subtitles" src="./media/sample-subs.vtt" srcLang="en" label="English" default />
@@ -1056,7 +1075,54 @@ export function Player({ settings }: { settings: Settings }) {
           </video>
           )}
 
-          {!playing && (
+          {/* v0.15.0 — decode rescue card: when the built-in view can't play a
+              file (engine down + unsupported codec), say so and offer real
+              exits: repair the native engine, copy diagnostics, or retry. */}
+          {!isMpv && vidErr && (
+            <div className="ply-err">
+              <span className="icon-btn lg" style={{ background: "var(--accent-dim)", color: "var(--accent)", borderRadius: 99 }}>
+                <Icon name="film" size={24} />
+              </span>
+              <div className="ply-err-t">This file can't decode in the built-in view</div>
+              <div className="ply-err-s">
+                The native engine on this PC is down — repair it and OMP plays
+                everything (MKV, HEVC, AVI, whatever).
+              </div>
+              <div className="ply-err-row">
+                <button
+                  className="btn accent"
+                  onClick={() => {
+                    toast("Engine repair started — watch the progress here and in Settings", "info");
+                    void invoke<boolean>("omp_repair_download", { kind: "engine" })
+                      .then((ok) => {
+                        if (ok) { toast("Engine repaired — try the video again", "ok"); setVidRetry((n) => n + 1); }
+                      })
+                      .catch(() => toast("Repair could not start — check your connection", "err"));
+                  }}
+                >
+                  <Icon name="restore" size={15} /> Repair engine
+                </button>
+                <button
+                  className="btn"
+                  onClick={async () => {
+                    try {
+                      const shell = await invoke<Record<string, unknown>>("shell_info").catch(() => null);
+                      const d = await invoke<Record<string, unknown>>("mpv_diag").catch(() => null);
+                      await navigator.clipboard.writeText(JSON.stringify({ app: APP_VERSION, shell, engine: eng.kind, diag: d }, null, 2));
+                      toast("Diagnostics copied — paste them to the bot", "ok");
+                    } catch { toast("Copy failed", "err"); }
+                  }}
+                >
+                  <Icon name="info" size={15} /> Copy diagnostics
+                </button>
+                <button className="btn" onClick={() => { setVidErr(false); setVidRetry((n) => n + 1); }}>
+                  <Icon name="rotate" size={15} /> Try again
+                </button>
+              </div>
+            </div>
+          )}
+
+          {!playing && !vidErr && (
             <button className="stage-big-play" onClick={togglePlay} aria-label="Play">
               <Icon name="play" />
             </button>

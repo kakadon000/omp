@@ -28,6 +28,29 @@ distinctive, not into reinventing video decoding.
   you pick**, ten one-tap presets, themes that travel as `.omptheme` files,
   adjustable transparency, Reduced Effects for low-end PCs.
 
+## What's new in v0.15.0 — instant launch, and a splash that behaves
+
+- **The loading screen shows ONCE — first launch only.** A marker in OMP's
+  data folder remembers the first successful boot; every launch after that
+  the main window appears **instantly** — no splash, no waiting, no animated
+  bar. If the UI ever failed to boot, the splash comes back for one more
+  try (and a 10-second failsafe guarantees the splash can never trap the
+  app again — exactly the "stuck here" report).
+- **The splash card is properly rounded now** — a floating glass card with
+  a soft stroke and shadow, not a sharp-edged rectangle sitting on your
+  wallpaper.
+- **Faster everything at boot:** OS info, the update check and the engine
+  health probe now wait ~2.5s behind the first paint instead of racing it —
+  opening OMP and starting a video happens with the full window already up.
+- **"Not playing" now tells you why — and offers real exits.** When a file
+  can't decode in the built-in view (engine down + HEVC/MKV is the classic),
+  the player used to show a silent black box. Now you get a rescue card:
+  **Repair engine** (one tap, progress toasts), **Copy diagnostics**, and
+  **Try again** — plus a 12-second stall watchdog so even header-level
+  failures surface instead of hanging forever.
+- **Untouched by design:** radio, engine internals, EQ, sleep timer, Theme
+  Studio, Online tabs, drag & drop, downloader, editor behavior.
+
 ## What's new in v0.14.1 — nothing stuck, ever
 
 - **The editor's "reading media…" can no longer hang.** When a clip's codec

@@ -64,6 +64,18 @@ const ROUTE_ORDER: Route[] = [
   "online", "downloads", "widget", "library", "themes", "settings",
 ];
 
+// v0.15.0 — the splash is a FIRST-LAUNCH luxury. localStorage remembers the
+// first successful boot; every launch after: no in-app overlay, and the native
+// splash is closed with zero wait (the Rust side never even shows it again —
+// the main window appears instantly from the setup hook).
+const FIRST_BOOT = (() => {
+  try {
+    const seen = localStorage.getItem("omp.launched.v1");
+    localStorage.setItem("omp.launched.v1", "1");
+    return !seen;
+  } catch { return true; }
+})();
+
 export default function App() {
   const route = useRoute();
   const [settings, setSettings] = useState<Settings>(loadSettings);
@@ -77,32 +89,36 @@ export default function App() {
   // latest media-entry router, shared with the drag & drop subscription
   const openPathRef = useRef<(p: string) => void>(() => {});
 
-  // boot: apply settings, ask the shell for OS info, close native splash
+  // boot: apply settings, close the native splash, THEN idle-work
   useEffect(() => {
     applySettings(settings);
     void initEngine(settings.engine); // resolve mpv availability before the Player mounts
-    getShellInfo().then((info) => {
-      if (info && info.win !== "other") document.documentElement.dataset.win = info.win;
-    }).catch(() => { /* cosmetic — Windows-generation styling only */ });
-    // v0.13.0 — a quiet weekly update nudge; fires only when a newer
-    // release actually exists, and never nags more than once a week
-    const UPD_KEY = "omp.updatecheck.at";
-    if (isTauri && Date.now() - Number(localStorage.getItem(UPD_KEY) || 0) > 7 * 24 * 3600 * 1000) {
-      localStorage.setItem(UPD_KEY, String(Date.now()));
-      void invoke<{ latest: string; url: string; newer: boolean } | null>("check_update", { current: APP_VERSION })
-        .then((r) => {
-          if (r?.newer) toast(`OMP v${r.latest} is out — Settings → About → Get v${r.latest}`, "info");
-        })
-        .catch(() => { /* offline — silence is fine for a background nudge */ });
-    }
+    // v0.15.0 — first paint beats everything: OS info, the update nudge and
+    // every other nice-to-have wait ~2.5s so the window is UP instantly.
+    const idle = setTimeout(() => {
+      getShellInfo().then((info) => {
+        if (info && info.win !== "other") document.documentElement.dataset.win = info.win;
+      }).catch(() => { /* cosmetic — Windows-generation styling only */ });
+      // v0.13.0 — a quiet weekly update nudge; fires only when a newer
+      // release actually exists, and never nags more than once a week
+      const UPD_KEY = "omp.updatecheck.at";
+      if (isTauri && Date.now() - Number(localStorage.getItem(UPD_KEY) || 0) > 7 * 24 * 3600 * 1000) {
+        localStorage.setItem(UPD_KEY, String(Date.now()));
+        void invoke<{ latest: string; url: string; newer: boolean } | null>("check_update", { current: APP_VERSION })
+          .then((r) => {
+            if (r?.newer) toast(`OMP v${r.latest} is out — Settings → About → Get v${r.latest}`, "info");
+          })
+          .catch(() => { /* offline — silence is fine for a background nudge */ });
+      }
+    }, 2500);
     const t = setTimeout(() => {
       setBooted(true);
       if (isTauri) invoke("close_splash");
-    }, 900);
+    }, FIRST_BOOT ? 900 : 0);
     // fully unmount the boot overlay shortly after the fade — an invisible
     // overlay with an infinite loading animation burns CPU forever
-    const t2 = setTimeout(() => setBootGone(true), 1500);
-    return () => { clearTimeout(t); clearTimeout(t2); };
+    const t2 = setTimeout(() => setBootGone(true), FIRST_BOOT ? 1500 : 120);
+    return () => { clearTimeout(idle); clearTimeout(t); clearTimeout(t2); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -118,20 +134,24 @@ export default function App() {
     const AUTO_KEY = "omp.autorepair.at";
     type Comp = { name: string; present: boolean };
     type Health = { engine_loads: boolean; components: Comp[] };
-    void invoke<Health>("omp_health").then((h) => {
-      if (!h || !Array.isArray(h.components)) return;
-      const eng = h.components.find((c) => c.name === "engine");
-      const ytdlp = h.components.find((c) => c.name === "ytdlp");
-      let kind = "";
-      if (!eng?.present || !h.engine_loads) kind = "engine";
-      else if (ytdlp && !ytdlp.present) kind = "ytdlp";
-      if (!kind) return;
-      const last = Number(localStorage.getItem(AUTO_KEY) || 0);
-      if (Date.now() - last < 24 * 3600 * 1000) return;
-      localStorage.setItem(AUTO_KEY, String(Date.now()));
-      toast("Engine files are broken — auto-repair is running in the background ⚡", "info");
-      void invoke<boolean>("omp_repair_download", { kind });
-    }).catch(() => { /* health probe is best-effort at boot */ });
+    // v0.15.0 — the health probe waits 3s: opening the app must never race
+    // the first paint, even against a slow disk
+    const probe = setTimeout(() => {
+      void invoke<Health>("omp_health").then((h) => {
+        if (!h || !Array.isArray(h.components)) return;
+        const eng = h.components.find((c) => c.name === "engine");
+        const ytdlp = h.components.find((c) => c.name === "ytdlp");
+        let kind = "";
+        if (!eng?.present || !h.engine_loads) kind = "engine";
+        else if (ytdlp && !ytdlp.present) kind = "ytdlp";
+        if (!kind) return;
+        const last = Number(localStorage.getItem(AUTO_KEY) || 0);
+        if (Date.now() - last < 24 * 3600 * 1000) return;
+        localStorage.setItem(AUTO_KEY, String(Date.now()));
+        toast("Engine files are broken — auto-repair is running in the background ⚡", "info");
+        void invoke<boolean>("omp_repair_download", { kind });
+      }).catch(() => { /* health probe is best-effort at boot */ });
+    }, 3000);
     void tauriListen<{ kind: string; phase: string }>("omp://repair", (e) => {
       if (e.phase === "done" && e.kind === "engine") {
         toast("Engine repaired — native playback restored ⚡", "ok");
@@ -139,7 +159,7 @@ export default function App() {
         toast("Auto-repair failed — Settings → Engine & tools has the details", "err");
       }
     }).then((fn) => { un = fn; });
-    return () => { un?.(); };
+    return () => { clearTimeout(probe); un?.(); };
   }, []);
 
   // player tells us when video is actually playing → auto-hide the sidebar
@@ -345,8 +365,9 @@ export default function App() {
       <ContextMenuHost />
       {keysOpen && <ShortcutsModal groups={SHORTCUT_GROUPS} onClose={() => setKeysOpen(false)} />}
 
-      {/* boot splash (native app uses the real splash window; web shows this) */}
-      {!bootGone && (
+      {/* boot splash — FIRST LAUNCH ONLY (v0.15.0): repeat launches show
+          the app instantly; the web fallback splash is skipped entirely */}
+      {!bootGone && FIRST_BOOT && (
         <div className={`boot ${booted ? "done" : ""}`} aria-hidden={booted}>
           <div className="card">
             <img src="./icon-512.png" alt="OMP" />

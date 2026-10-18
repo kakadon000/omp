@@ -7,10 +7,17 @@
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
       html, body { height: 100%; overflow: hidden; background: transparent; font-family: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif; }
+      /* v0.15.0 — a floating rounded glass card, not a sharp window rect:
+         the window itself is transparent, so the rounded clip + stroke +
+         shadow land directly on the desktop. No window material is applied
+         (Mica would paint the rect sharp behind this). */
+      body { padding: 26px; }
       .scene {
         height: 100%; display: flex; align-items: center; justify-content: center;
-        background: rgba(12, 14, 20, 0.55); backdrop-filter: blur(40px) saturate(1.2);
-        -webkit-backdrop-filter: blur(40px) saturate(1.2);
+        background: linear-gradient(180deg, rgba(16, 18, 26, 0.78), rgba(10, 12, 18, 0.86));
+        border-radius: 22px;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        box-shadow: 0 18px 60px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.06);
       }
       .card { text-align: center; user-select: none; }
       .logo { width: 88px; height: 88px; margin: 0 auto 20px; border-radius: 24px;

@@ -133,6 +133,10 @@ fn close_splash(app: tauri::AppHandle) {
         let _ = main.show();
         let _ = main.set_focus();
     }
+    // v0.15.0 — the UI answered: from now on every launch skips the splash.
+    if let Ok(d) = app.path().app_data_dir() {
+        let _ = std::fs::write(d.join("ui.ok"), b"ok");
+    }
 }
 
 #[tauri::command]
@@ -855,15 +859,51 @@ pub fn run() {
         })
         .setup(|app| {
             // Window materials, applied before the main window is shown.
+            // v0.15.0 — the splash window gets NO Mica/Acrylic: its material
+            // fills the window rect with sharp corners and defeats the rounded
+            // glass card. The splash is a plain transparent webview now.
             #[cfg(windows)]
             {
                 let mica = windows_build() >= 22000;
                 if let Some(w) = app.get_webview_window("main") {
                     apply_effect(&w, mica);
                 }
-                if let Some(s) = app.get_webview_window("splashscreen") {
-                    apply_effect(&s, mica);
+            }
+            // v0.15.0 — THE SPLASH IS A FIRST-LAUNCH LUXURY. A marker file in
+            // the app data dir says the UI came up successfully at least once.
+            //   first launch  → show the splash while the webview warms up;
+            //   every launch after → main window shows INSTANTLY, no splash.
+            // close_splash() writes the marker, so a machine whose webview
+            // never managed to boot still gets the splash next time.
+            let data_dir = app.path().app_data_dir().ok();
+            let booted_once = data_dir
+                .as_ref()
+                .map(|d| d.join("ui.ok").is_file())
+                .unwrap_or(false);
+            if booted_once {
+                if let Some(m) = app.get_webview_window("main") {
+                    let _ = m.show();
                 }
+            } else if let Some(s) = app.get_webview_window("splashscreen") {
+                let _ = s.show();
+            }
+            // FAILSAFE — the splash must never trap the app again. If the
+            // webview crashed or hangs, React never calls close_splash and
+            // the splash would sit there forever (the stuck-boot reports).
+            // After 10s: if the splash is still alive, kill it and surface
+            // the main window regardless.
+            {
+                let app2 = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(10));
+                    if let Some(s) = app2.get_webview_window("splashscreen") {
+                        let _ = s.close();
+                        if let Some(m) = app2.get_webview_window("main") {
+                            let _ = m.show();
+                            let _ = m.set_focus();
+                        }
+                    }
+                });
             }
             // "Open with OMP" / default-player launch: collect media paths
             // from OUR command line before the UI mounts; the UI drains them
