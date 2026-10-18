@@ -769,6 +769,7 @@ pub fn run() {
             mpv::mpv_set_volume,
             mpv::mpv_set_muted,
             mpv::mpv_set_eq,
+            mpv::mpv_set_af,
             mpv::mpv_set_transform,
             mpv::mpv_set_ab,
             mpv::mpv_set_delays,

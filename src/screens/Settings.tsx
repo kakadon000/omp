@@ -518,6 +518,30 @@ export function Settings({ settings, update }: { settings: SettingsShape; update
             ))}
           </div>
         </div>
+        <div className="row">
+          <span className="icon-btn"><Icon name="volume" /></span>
+          <div className="row-main">
+            <div className="row-title">Audio equalizer</div>
+            <div className="row-desc">
+              Applied by the native engine — instantly, music and video alike.
+              Flat resets to the pure sound.
+            </div>
+          </div>
+          <div className="seg">
+            {([["off", "Flat"], ["bass", "Bass"], ["vocal", "Vocal"], ["treble", "Treble"], ["rock", "Rock"]] as const).map(([id, label]) => (
+              <button
+                key={id}
+                className={settings.audioEq === id ? "on" : ""}
+                onClick={() => {
+                  update({ audioEq: id });
+                  void invoke<boolean>("mpv_set_af", { preset: id }).catch(() => {});
+                }}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       <div className="section-label">Online</div>

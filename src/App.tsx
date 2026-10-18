@@ -65,6 +65,42 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // v0.10.1 — SELF-HEAL: if a core component is missing/blocked on this machine
+  // (antivirus quarantine is the usual suspect), auto-run the official repair
+  // once per 24h instead of waiting for the user to discover the button.
+  // Only engine + yt-dlp (the "nothing plays" family) — ffmpeg is 164 MB and
+  // editor-only, so it stays manual. Progress/completion still lands in
+  // Settings → Engine & tools; toasts here make it visible anywhere.
+  useEffect(() => {
+    if (!isTauri) return;
+    let un: (() => void) | undefined;
+    const AUTO_KEY = "omp.autorepair.at";
+    type Comp = { name: string; present: boolean };
+    type Health = { engine_loads: boolean; components: Comp[] };
+    void invoke<Health>("omp_health").then((h) => {
+      if (!h || !Array.isArray(h.components)) return;
+      const eng = h.components.find((c) => c.name === "engine");
+      const ytdlp = h.components.find((c) => c.name === "ytdlp");
+      let kind = "";
+      if (!eng?.present || !h.engine_loads) kind = "engine";
+      else if (ytdlp && !ytdlp.present) kind = "ytdlp";
+      if (!kind) return;
+      const last = Number(localStorage.getItem(AUTO_KEY) || 0);
+      if (Date.now() - last < 24 * 3600 * 1000) return;
+      localStorage.setItem(AUTO_KEY, String(Date.now()));
+      toast("Engine files are broken — auto-repair is running in the background ⚡", "info");
+      void invoke<boolean>("omp_repair_download", { kind });
+    }).catch(() => { /* health probe is best-effort at boot */ });
+    void tauriListen<{ kind: string; phase: string }>("omp://repair", (e) => {
+      if (e.phase === "done" && e.kind === "engine") {
+        toast("Engine repaired — native playback restored ⚡", "ok");
+      } else if (e.phase === "error" && e.kind === "engine") {
+        toast("Auto-repair failed — Settings → Engine & tools has the details", "err");
+      }
+    }).then((fn) => { un = fn; });
+    return () => { un?.(); };
+  }, []);
+
   // player tells us when video is actually playing → auto-hide the sidebar
   useEffect(() => {
     const on = (e: Event) => setVidPlaying(!!(e as CustomEvent<{ playing?: boolean }>).detail?.playing);

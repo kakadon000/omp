@@ -294,6 +294,19 @@ function Widget() {
   );
 }
 
+// v0.10.1 — the widget follows the user's accent (Theme Studio choice).
+// Same-origin WebView → omp.settings is shared with the main window. Named
+// accents use their dark-mode hex from tokens.css; custom accents use the
+// stored hex as-is (the widget is a dark overlay, so no light-mode variant).
+try {
+  const s = JSON.parse(localStorage.getItem("omp.settings") || "{}") as { accent?: string; customAccent?: string | null };
+  const NAMED: Record<string, string> = {
+    blue: "#4cc2ff", teal: "#45d0c8", violet: "#b6a6ff", amber: "#ffc76b", graphite: "#c2c7d4",
+  };
+  const hex = (s.accent === "custom" && s.customAccent) || NAMED[s.accent || ""] || "";
+  if (hex) document.documentElement.style.setProperty("--w-accent", hex);
+} catch { /* default #4f8cff stands */ }
+
 createRoot(document.getElementById("widget-root")!).render(
   <StrictMode>
     <Widget />

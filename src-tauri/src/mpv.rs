@@ -1203,6 +1203,25 @@ pub fn mpv_set_eq(b: i32, c: i32, s: i32, h: i32) -> bool {
     .unwrap_or(false)
 }
 
+/// Audio EQ presets — ffmpeg `af` chains (bass/treble biquads, peak filters).
+/// Applied to the live engine instantly; empty string resets to flat. When no
+/// engine instance exists the property set fails harmlessly (returns false).
+#[tauri::command]
+pub fn mpv_set_af(preset: String) -> bool {
+    let af = match preset.as_str() {
+        "bass" => "bass=g=6:f=105:w=0.7",
+        "vocal" => "equalizer=f=900:t=q:w=1.6:g=3,equalizer=f=2800:t=q:w=1.8:g=2.5",
+        "treble" => "treble=g=5:f=9000:w=0.6",
+        "rock" => "bass=g=4:f=120:w=0.8,treble=g=3:f=6500:w=0.6",
+        _ => "", // "off" → flat (clears the chain)
+    };
+    with_instance(|inst, a| unsafe {
+        set_prop_string(a, inst.h.0, "af", af)
+            & set_prop_string(a, inst.h.0, "af-defaults", "")
+    })
+    .unwrap_or(false)
+}
+
 #[tauri::command]
 pub fn mpv_set_transform(aspect: String, zoom: f64, rotate: i32) -> bool {
     with_instance(|inst, a| unsafe {

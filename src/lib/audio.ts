@@ -14,6 +14,7 @@ import { useSyncExternalStore } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 
 import { invoke, isTauri, tauriEmit, tauriListen } from "./tauri";
+import { loadSettings } from "./store";
 import { toast } from "../components/Toast";
 import { onMpvEvent } from "./engine";
 
@@ -142,6 +143,16 @@ if (el) {
 }
 
 let attached = false;
+
+// v0.10.1 — persisted audio-EQ preset (Settings → Playback). Applied on
+// engine attach AND on every track "loaded" event — the Rust side rebuilds
+// the engine on audio↔video takeovers, which resets `af` to flat; re-applying
+// here keeps the chosen preset sticky. One property-set per load: negligible.
+export function applyAudioEq() {
+  if (!isTauri || !attached) return;
+  const preset = loadSettings().audioEq || "off";
+  void invoke<boolean>("mpv_set_af", { preset }).catch(() => {});
+}
 // v0.6.2: after a failed engine bring-up, STOP retrying on every track —
 // the fallback engine takes over instantly instead. Cleared by the Settings
 // "Re-test engine" button (resetEngineProbe).
@@ -185,6 +196,7 @@ async function ensureEngine(): Promise<boolean> {
     }
   }
   attached = true;
+  applyAudioEq(); // v0.10.1 — re-stick the persisted EQ preset on a fresh attach
   return true;
 }
 
@@ -474,6 +486,7 @@ if (isTauri) {
         break;
       case "loaded":
         consecutiveErrors = 0;
+        applyAudioEq(); // re-stick EQ after any Rust-side engine rebuild
         // a real file is playing — any pending error-skip is obsolete
         if (skipTimer !== null) {
           clearTimeout(skipTimer);

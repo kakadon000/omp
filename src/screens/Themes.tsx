@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Icon } from "../components/Icon";
 import { toast } from "../components/Toast";
 import { isTauri, invoke } from "../lib/tauri";
@@ -39,6 +39,11 @@ function presetActive(s: Settings, p: ThemePreset): boolean {
 export function Themes({ settings, update }: { settings: Settings; update: (p: Partial<Settings>) => void }) {
   // local hex text field state — commits to settings on every valid change
   const [hexText, setHexText] = useState<string>(settings.customAccent || "#ff7a00");
+  // keep the field in sync when the accent changes from elsewhere (preset,
+  // theme import, double-clicked .omptheme) — was stale before v0.10.1
+  useEffect(() => {
+    if (settings.customAccent) setHexText(settings.customAccent);
+  }, [settings.customAccent]);
 
   const applyPreset = (p: ThemePreset) => {
     update({

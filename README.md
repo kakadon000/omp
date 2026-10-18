@@ -28,6 +28,35 @@ distinctive, not into reinventing video decoding.
   you pick**, ten one-tap presets, themes that travel as `.omptheme` files,
   adjustable transparency, Reduced Effects for low-end PCs.
 
+## What's new in v0.10.1 — self-heal, the sticky equalizer, and polish
+
+- **OMP now repairs itself without being asked.** On every boot the app runs
+  the component health probe; if the mpv engine is missing or refused (the
+  classic antivirus-quarantine situation) or the YouTube extractor is gone,
+  the official one-click repair **starts automatically in the background** —
+  with a toast when it begins and a toast when the engine is back. Throttled
+  to once per 24 hours per machine, and it never touches the 164 MB editor
+  exporter (that stays a manual button in Engine & tools). This closes the
+  loop on the "nothing plays" family: install → engine dead → OMP notices →
+  OMP fixes it → native playback restored, no support message required.
+- **Audio equalizer (Settings → Playback).** Flat · Bass · Vocal · Treble ·
+  Rock — real ffmpeg filter chains (`bass`/`treble` biquads, peak filters)
+  applied by the native engine instantly, for music and video alike, and
+  persisted. The preset re-sticks itself after every engine rebuild
+  (audio↔video takeovers reset the filter chain on the mpv side) and after
+  every fresh engine attach.
+- **The desktop widget follows your accent.** The floating player used to
+  ship a hardcoded blue; it now reads the Theme Studio choice at boot — named
+  accents and custom colors alike — so a Cyberpunk setup gets a Cyberpunk
+  widget.
+- **System dark/light is now live.** With Theme = System, flipping Windows'
+  app mode used to leave the app in the old look until you poked a setting;
+  a `prefers-color-scheme` listener re-applies everything (including custom
+  accent contrast math) the moment the OS switches.
+- **Theme Studio field sync fix.** The hex input could show a stale value
+  after applying a custom-accent preset or importing a theme; it now tracks
+  the live setting.
+
 ## What's new in v0.10.0 — the Theme Studio: any color, ten presets, themes as files
 
 - **Custom accent — any color you want.** The five built-in accents are joined

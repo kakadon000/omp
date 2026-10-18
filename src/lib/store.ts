@@ -15,6 +15,7 @@ export type Settings = {
   engine: "auto" | "mpv" | "web";
   defaultSpeed: number;
   seekStep: number;
+  audioEq: "off" | "bass" | "vocal" | "treble" | "rock"; // v0.10.1 — mpv `af` preset
   sidebarRail: boolean;
   autoHideSidebar: boolean;
   bgPlayback: boolean; // v0.6.1 — persisted, was a lossy useState before
@@ -30,6 +31,7 @@ const DEFAULTS: Settings = {
   engine: "auto",
   defaultSpeed: 1,
   seekStep: 10,
+  audioEq: "off",
   sidebarRail: false,
   autoHideSidebar: true,
   bgPlayback: true,
@@ -76,6 +78,18 @@ export function applySettings(s: Settings) {
     s.effects === "reduced" ||
     (s.effects === "auto" && matchMedia("(prefers-reduced-motion: reduce)").matches);
   root.classList.toggle("reduced", reduced);
+}
+
+// v0.10.1 — live dark/light follow: when Windows flips its app mode and the
+// user chose "system", the running app used to keep the OLD look until a
+// settings change re-applied it. Re-apply on the media-query event.
+if (typeof matchMedia === "function") {
+  try {
+    const mq = matchMedia("(prefers-color-scheme: light)");
+    const onChange = () => applySettings(loadSettings());
+    if (mq.addEventListener) mq.addEventListener("change", onChange);
+    else if (mq.addListener) mq.addListener(onChange); // old WebView2
+  } catch { /* never block boot on a cosmetics listener */ }
 }
 
 /* ------------------------- tiny pub/sub ------------------------- */
