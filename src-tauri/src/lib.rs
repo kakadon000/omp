@@ -66,6 +66,7 @@ mod mpv;
 mod mpv;
 
 mod library;
+mod editor;
 
 /// Detect the Windows build number from the OS plugin (e.g. "10.0.22631").
 #[cfg(windows)]
@@ -396,6 +397,12 @@ pub fn run() {
             library::playlist_add,
             library::playlist_remove_item,
             library::playlist_items,
+            editor::editor_ffmpeg_status,
+            editor::editor_write_png,
+            editor::editor_write_project,
+            editor::editor_read_project,
+            editor::editor_export,
+            editor::editor_export_cancel,
             widget_toggle,
             widget_set_expanded,
             widget_set_pos,

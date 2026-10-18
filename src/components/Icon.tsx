@@ -62,6 +62,7 @@ const P: Record<string, React.ReactNode> = {
   rotate: <><path d="M20 12a8 8 0 1 1-2.5-5.8" /><path d="M20 3.5V8h-4.5" /></>,
   slideshow: <><rect x="3.5" y="6" width="13" height="10" rx="1.5" /><path d="M20.5 7v10" /><path d="m8 9 3.5 2L8 13v-4Z" fill="currentColor" stroke="none" /></>,
   trash: <><path d="M4.5 6.5h15M9.5 6.5V5c0-.6.4-1 1-1h3c.6 0 1 .4 1 1v1.5M6.5 6.5 7 19c0 .8.7 1.5 1.5 1.5h7c.8 0 1.5-.7 1.5-1.5l.5-12.5" /><path d="M10 10.5v6M14 10.5v6" /></>,
+  save: <><path d="M5.5 4.5h10.2L19.5 8.3v11.2a1 1 0 0 1-1 1h-13a1 1 0 0 1-1-1v-14a1 1 0 0 1 1-1Z" /><path d="M8 4.5V9h7V4.5M8 20.5v-6h8v6" /></>,
   sparkle: <path d="M12 4.5 13.8 10 19.5 12 13.8 14 12 19.5 10.2 14 4.5 12 10.2 10 12 4.5Z" />,
   cast: <><path d="M3.5 8V6.5C3.5 5.7 4.2 5 5 5h14c.8 0 1.5.7 1.5 1.5v11c0 .8-.7 1.5-1.5 1.5h-6" /><path d="M3.5 12a7 7 0 0 1 7 7M3.5 15.5A3.5 3.5 0 0 1 7 19" /><circle cx="3.8" cy="19" r="0.7" fill="currentColor" stroke="none" /></>,
   pin: <path d="M9 4.5h6M12 4.5V10c0 2 3 3 3 5.5v1a1 1 0 0 1-1 1h-4a1 1 0 0 1-1-1v-1c0-2.5 3-3.5 3-5.5" transform="translate(0 1.5)" />,

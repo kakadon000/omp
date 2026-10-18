@@ -14,6 +14,7 @@ import {
 } from "./lib/store";
 import { fileSrc } from "./lib/library";
 import { playTracks, type AudioTrack } from "./lib/audio";
+import { openProjectPath } from "./lib/editor";
 import { Home } from "./screens/Home";
 import { Player } from "./screens/Player";
 import { Music, NowPlayingBar } from "./screens/Music";
@@ -107,7 +108,11 @@ export default function App() {
       if (!p) return;
       const ext = (p.split(".").pop() || "").toLowerCase();
       const name = p.split(/[\\/]/).pop() || p;
-      if (AUDIO.has(ext)) {
+      if (ext === "ompj") {
+        void openProjectPath(p).then((ok) => {
+          if (ok) navigate("editor");
+        });
+      } else if (AUDIO.has(ext)) {
         const t: AudioTrack = {
           id: p, kind: "file", src: p, title: name,
           artist: "External file", album: "", thumb: "", duration: 0,
@@ -151,7 +156,7 @@ export default function App() {
       case "player": return <Player settings={settings} />;
       case "music": return <Music query={query} />;
       case "gallery": return <Gallery query={query} />;
-      case "editor": return <Editor />;
+      case "editor": return <Editor settings={settings} />;
       case "online": return <Online query={query} />;
       case "widget": return <WidgetPage />;
       case "library": return <Library query={query} />;

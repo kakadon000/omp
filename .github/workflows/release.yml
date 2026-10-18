@@ -72,6 +72,15 @@ jobs:
           if (-not $dll) { throw "no dll found in mpv-dev archive" }
           Copy-Item $dll.FullName src-tauri/resources/mpv-2.dll
           Write-Host "Engine dll: $($dll.Name) ($([math]::Round($dll.Length/1MB,1)) MB)"
+          # 3) bundle ffmpeg for the Phase 4 editor export pipeline
+          # (BtbN release-branch GPL build — libx264 / libvpx-vp9 / libopus all in)
+          $ffurl = "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-release-latest-win64-gpl.zip"
+          Invoke-WebRequest -Uri $ffurl -OutFile ffmpeg-bn.zip -Headers @{ "User-Agent" = "omp-ci-build" }
+          7z x ffmpeg-bn.zip -offmpeg | Out-Null
+          $ffexe = Get-ChildItem -Recurse -Filter ffmpeg.exe offmpeg | Select-Object -First 1
+          if (-not $ffexe) { throw "no ffmpeg.exe found in BtbN archive" }
+          Copy-Item $ffexe.FullName src-tauri/resources/ffmpeg.exe
+          Write-Host "FFmpeg: $(ath]::Round($ffexe.Length/1MB,1)) MB"
           Write-Host "Staged resources:"
           Get-ChildItem -Recurse src-tauri/resources | Select-Object FullName, Length
 
@@ -82,6 +91,6 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "OMP ${{ github.ref_name }}"
-          releaseBody: "Every Format. One Player. Open to All. — v0.6.2: music that always plays. Root-cause engine fixes (libmpv idle=yes, surface-less audio, self-healing engine instances), a built-in fallback audio engine that keeps music alive even when the native DLL is blocked by antivirus, human-readable engine errors + a Re-test engine button in Settings, Windows media keys + media flyout, Widget 2.0 (queue tap-to-jump, shuffle/repeat, position memory, CSS-only playing indicator), airier translucent glass and a lighter widget broadcast. Download the Windows installer below."
+          releaseBody: "Every Format. One Player. Open to All. — v0.7.0: Phase 4, the lightweight editor. Real video editing inside OMP: trim with a scrub timeline, crop with corner handles, timed overlays (rectangles, circles, arrows, text) that appear exactly when you place them, full undo/redo (Ctrl+Z / Ctrl+Y), projects that save as .ompj and reopen where you left off, and true FFmpeg exports (MP4 H.264, WebM VP9, animated GIF) with live progress and real cancel. The editor previews through the same mpv engine as the player — MKV, HEVC, AVI and everything else edits natively. .ompj files now open with OMP by double-click, and Settings shows the bundled exporter status. Download the Windows installer below."
           releaseDraft: false
           prerelease: false

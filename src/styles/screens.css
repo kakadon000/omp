@@ -407,8 +407,54 @@ html.reduced .track-eq i { animation: none; height: 8px; }
 .ed-stage { display: flex; flex-direction: column; min-height: 0; }
 .ed-canvas-wrap { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 14px; position: relative; overflow: hidden; border-radius: var(--radius-lg); background: rgba(0,0,0,0.22); }
 :root[data-theme="light"] .ed-canvas-wrap { background: rgba(20, 22, 30, 0.88); }
+/* mpv renders BELOW the webview: the wrap + video box must be see-through
+   wherever the surface sits, or the preview would be a dimmed blank panel */
+html.mpv-live .ed-canvas-wrap { background: transparent; }
 .ed-canvas { position: relative; max-width: 100%; max-height: 100%; }
 .ed-canvas > img, .ed-canvas > video { max-width: 100%; max-height: 52vh; border-radius: 6px; display: block; }
+.ed-video-box { position: absolute; border-radius: 8px; overflow: hidden; background: rgba(0,0,0,0.35); box-shadow: 0 0 0 1px var(--stroke); }
+.ed-video-box.mpv { background: transparent; box-shadow: none; }
+.ed-video-box video { width: 100%; height: 100%; display: block; }
+
+/* crop rectangle + dim shutters + corner handles (full-frame view) */
+.ed-crop-box { position: absolute; border: 2px dashed var(--accent); border-radius: 4px; cursor: move; }
+.ed-crop-dim { position: absolute; background: rgba(0,0,0,0.55); pointer-events: none; }
+.ed-crop-dim.top { left: 0; right: 0; bottom: 100%; height: 200vh; }
+.ed-crop-dim.bottom { left: 0; right: 0; top: 100%; height: 200vh; }
+.ed-crop-dim.left { top: 0; bottom: 0; right: 100%; width: 200vw; }
+.ed-crop-dim.right { top: 0; bottom: 0; left: 100%; width: 200vw; }
+.ed-crop-handle {
+  position: absolute; width: 14px; height: 14px; border-radius: 4px;
+  background: var(--accent); border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+}
+.ed-crop-handle.nw { left: -8px; top: -8px; cursor: nwse-resize; }
+.ed-crop-handle.ne { right: -8px; top: -8px; cursor: nesw-resize; }
+.ed-crop-handle.sw { left: -8px; bottom: -8px; cursor: nesw-resize; }
+.ed-crop-handle.se { right: -8px; bottom: -8px; cursor: nwse-resize; }
+
+/* overlay resize corner */
+.ed-resize {
+  position: absolute; right: -7px; bottom: -7px; width: 13px; height: 13px;
+  border-radius: 3px; background: var(--accent); border: 2px solid #fff;
+  cursor: nwse-resize; box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+}
+
+/* overlay timing lane (keyframe track) */
+.ed-lane { position: relative; height: 22px; margin-top: 8px; border-radius: 7px; background: var(--surface-2); border: 1px solid var(--stroke); overflow: hidden; }
+.ed-lane-seg {
+  position: absolute; top: 4px; bottom: 4px; min-width: 4px; border-radius: 99px;
+  opacity: 0.8; border: none; cursor: pointer; padding: 0;
+  outline: 2px solid transparent; transition: opacity 0.12s, outline-color 0.12s;
+}
+.ed-lane-seg:hover { opacity: 1; }
+.ed-lane-seg.on { opacity: 1; outline-color: var(--text); }
+
+/* playhead */
+.ed-playhead { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--text); pointer-events: none; opacity: 0.85; }
+
+/* empty state */
+.ed-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 60px 24px; min-height: 380px; }
+
 .ed-overlay-item {
   position: absolute; border: 1.5px dashed var(--accent);
   display: flex; align-items: center; justify-content: center;

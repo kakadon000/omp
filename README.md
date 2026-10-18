@@ -27,6 +27,28 @@ distinctive, not into reinventing video decoding.
 - **Theme Studio** — dark/light/system, five tasteful accents, adjustable
   transparency, Reduced Effects for low-end PCs.
 
+## What's new in v0.7.0 — Phase 4: the lightweight editor
+
+- **Real editing, same engine.** The Editor screen now loads any video OMP can
+  play (MKV, HEVC, AVI, WebM, MP4…) and previews it through the native mpv
+  engine — scrub, trim, annotate on the real picture, not a proxy.
+- **Trim** with a scrubbable timeline: drag the selection, the preview loops
+  inside it, exports only the kept range.
+- **Crop** with corner handles over the full frame; the preview, overlays and
+  the export all agree on the crop window.
+- **Timed overlays** — rectangles, circles, arrows and text with color, stroke
+  and font controls. Each overlay has an in/out point on the keyframe lane, so
+  annotations appear exactly when you place them (set in/out at the playhead
+  with one click).
+- **Undo / redo** — Ctrl+Z / Ctrl+Y (40 steps) across every edit.
+- **Projects as .ompj** — JSON project files, auto-saved locally, reopenable
+  from the app or by double-click (.ompj is now a registered OMP file type).
+- **True FFmpeg export** — MP4 (H.264 + AAC, three quality presets), WebM
+  (VP9 + Opus) and animated GIF (palette-optimized) with live progress and a
+  real cancel (kills the encoder). Overlays are burned in pixel-perfect via
+  pre-rendered PNG frames, so the export matches the preview exactly.
+- **Diagnostics** — Settings shows the bundled FFmpeg exporter status and path.
+
 ## What's new in v0.6.2 — music that always plays + widget 2.0
 
 - **Music bulletproofed at the engine root.** Three stacked causes found and

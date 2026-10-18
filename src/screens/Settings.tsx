@@ -6,6 +6,7 @@ import { APP_VERSION, isTauri, invoke } from "../lib/tauri";
 import { navigate } from "../lib/router";
 import { engineStore, initEngine } from "../lib/engine";
 import { resetEngineProbe } from "../lib/audio";
+import { ffmpegStatus } from "../lib/editor";
 import {
   getStats, rescan as libRescan, cancelScan, onScanEvent,
   type LibraryStats,
@@ -51,6 +52,7 @@ export function Settings({ settings, update }: { settings: SettingsShape; update
   const [stats, setStats] = useState<LibraryStats | null>(null);
   const eng = useSyncExternalStore(engineStore.sub, engineStore.get);
   const [diag, setDiag] = useState<EngineDiag | null>(null);
+  const [ffFound, setFfFound] = useState<{ found: boolean; path: string } | null>(null);
   const [retesting, setRetesting] = useState(false);
 
   // live SQLite stats + scan status
@@ -67,6 +69,7 @@ export function Settings({ settings, update }: { settings: SettingsShape; update
   useEffect(() => {
     if (!isTauri) return;
     void invoke<EngineDiag>("mpv_diag").then((d) => setDiag(d));
+    void ffmpegStatus().then(setFfFound);
   }, [eng.available]);
 
   const scanning = !!stats?.scanning;
@@ -219,6 +222,22 @@ export function Settings({ settings, update }: { settings: SettingsShape; update
               </button>
             ))}
           </div>
+        </div>
+        <div className="row">
+          <span className="icon-btn"><Icon name="scissors" /></span>
+          <div className="row-main">
+            <div className="row-title">Editor exporter · FFmpeg</div>
+            <div className="row-desc" style={{ wordBreak: "break-all" }}>
+              {ffFound === null
+                ? "Checking…"
+                : ffFound.found
+                  ? `Bundled — editor exports MP4 / WebM / GIF (${ffFound.path})`
+                  : "Not found — reinstall the latest OMP to enable editor export"}
+            </div>
+          </div>
+          <span className={`chip ${ffFound?.found ? "" : "kf-chip"}`} style={ffFound ? { color: ffFound.found ? "var(--accent)" : "var(--warn, #ffb454)" } : undefined}>
+            {ffFound ? (ffFound.found ? "ready" : "missing") : "…"}
+          </span>
         </div>
         <div className="row">
           <span className="icon-btn"><Icon name="rocket" /></span>
