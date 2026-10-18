@@ -14,7 +14,7 @@
 use std::ffi::{c_char, c_void, CString};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Instant;
 
 use serde::Serialize;
@@ -450,7 +450,8 @@ fn pump(h: SendPtr, app: AppHandle, stop: Arc<AtomicBool>) {
                     if drop_hwnd != 0 {
                         // the surface was created on the main thread — destroy
                         // it there too (Win32 rule, background threads can't)
-                        let _ = app.run_on_main_thread(move || unsafe {
+                        // (already inside the pump's unsafe block)
+                        let _ = app.run_on_main_thread(move || {
                             DestroyWindow(drop_hwnd);
                         });
                     }
@@ -891,7 +892,7 @@ pub fn mpv_diag() -> EngineDiag {
             dll_path: loaded.unwrap_or_default(),
             probed_path: probed,
             load_error: if a.is_some() { 0 } else { last_err },
-            version: a.map(|a| unsafe { api_version_string((a.client_api_version)()) }),
+            version: a.map(|a| api_version_string((a.client_api_version)())),
         }
     }
     #[cfg(not(windows))]
