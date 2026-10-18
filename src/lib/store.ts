@@ -183,7 +183,13 @@ if (audio) {
 /* ------------------------- external file (open with…) ------------------------- */
 import { ensureSeekable } from "./media";
 
-export type CustomMedia = { name: string; url: string; path?: string; startAt?: number };
+export type CustomMedia = {
+  name: string;
+  url: string;
+  path?: string;
+  startAt?: number;
+  live?: boolean; // IPTV/radio stream — hide seek, show LIVE badge
+};
 export const customMedia = makeStore<CustomMedia>({ name: "", url: "" });
 
 /** Image opened via "Open with OMP" / double-click — shown at the top of the

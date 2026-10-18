@@ -25,6 +25,7 @@ fn is_media_ext(path: &str) -> bool {
             | "3gp" | "ogv"
             | "mp3" | "flac" | "m4a" | "wav" | "ogg" | "oga" | "opus" | "aac" | "wma"
             | "jpg" | "jpeg" | "png" | "webp" | "bmp" | "gif" | "avif" | "tif" | "tiff"
+            | "m3u" | "m3u8"
     )
 }
 
@@ -332,6 +333,45 @@ fn open_default_apps() -> bool {
     }
 }
 
+/// Read a text playlist (.m3u / .m3u8) from disk for the IPTV importer.
+/// Plain text in, plain text out — parsing lives in the frontend so the
+/// parser is shared by the web demo too.
+#[tauri::command]
+fn online_read_file(path: String) -> Option<String> {
+    let ext = path
+        .rsplit('.')
+        .next()
+        .map(|e| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    if !matches!(ext.as_str(), "m3u" | "m3u8" | "txt") {
+        return None;
+    }
+    std::fs::read_to_string(&path).ok()
+}
+
+/// Open an https URL in the system browser (YouTube Music, playlist exports,
+/// "get an API key" links). https-only — we never launch local executables.
+#[tauri::command]
+fn open_url(url: String) -> bool {
+    if !url.starts_with("https://") {
+        return false;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", &url])
+            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+            .spawn()
+            .is_ok()
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = url; // shell opening is a Windows-only affordance for now
+        false
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
         // MUST be the first plugin: catches second launches (double-clicking
@@ -411,6 +451,8 @@ pub fn run() {
             set_background_playback,
             pending_open_paths,
             open_default_apps,
+            online_read_file,
+            open_url,
             mpv::mpv_diag
         ])
         .on_window_event(|window, event| {

@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { TitleBar } from "./components/TitleBar";
 import { Sidebar } from "./components/Sidebar";
-import { Toasts } from "./components/Toast";
+import { Toasts, toast } from "./components/Toast";
 import { ContextMenuHost } from "./components/ContextMenu";
 import { ShortcutsModal, SHORTCUT_GROUPS } from "./components/ShortcutsModal";
 import { useRoute, navigate, type Route } from "./lib/router";
@@ -15,12 +15,17 @@ import {
 import { fileSrc } from "./lib/library";
 import { playTracks, type AudioTrack } from "./lib/audio";
 import { openProjectPath } from "./lib/editor";
+import { parseM3U, importChannels } from "./lib/online";
 import { Home } from "./screens/Home";
 import { Player } from "./screens/Player";
 import { Music, NowPlayingBar } from "./screens/Music";
 import { Gallery } from "./screens/Gallery";
 import { Editor } from "./screens/Editor";
-import { Online } from "./screens/Online";
+// Online screen is code-split (bundled ≠ loaded: iframes + search UI only
+// download when first visited)
+const Online = lazy(() =>
+  import("./screens/Online").then((m) => ({ default: m.Online })),
+);
 import { WidgetPage } from "./screens/Widget";
 import { Library } from "./screens/Library";
 import { Themes } from "./screens/Themes";
@@ -112,6 +117,16 @@ export default function App() {
         void openProjectPath(p).then((ok) => {
           if (ok) navigate("editor");
         });
+      } else if (ext === "m3u" || ext === "m3u8") {
+        // IPTV playlist → import into Online → Live TV, then land there
+        void invoke<string | null>("online_read_file", { path: p }).then((text) => {
+          if (!text) { toast("Could not read that playlist", "err"); return; }
+          const parsed = parseM3U(text, name);
+          if (!parsed.length) { toast("No channels found in that playlist", "err"); return; }
+          const { added, total } = importChannels(parsed, name);
+          toast(`Imported ${added} new channel${added === 1 ? "" : "s"} (${total} total)`, "ok");
+          navigate("online");
+        });
       } else if (AUDIO.has(ext)) {
         const t: AudioTrack = {
           id: p, kind: "file", src: p, title: name,
@@ -157,7 +172,7 @@ export default function App() {
       case "music": return <Music query={query} />;
       case "gallery": return <Gallery query={query} />;
       case "editor": return <Editor settings={settings} />;
-      case "online": return <Online query={query} />;
+      case "online": return <Suspense fallback={<div className="empty" style={{ padding: 80 }}><div className="t">Loading online…</div></div>}><Online query={query} /></Suspense>;
       case "widget": return <WidgetPage />;
       case "library": return <Library query={query} />;
       case "themes": return <Themes settings={settings} update={update} />;

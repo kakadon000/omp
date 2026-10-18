@@ -27,6 +27,32 @@ distinctive, not into reinventing video decoding.
 - **Theme Studio** — dark/light/system, five tasteful accents, adjustable
   transparency, Reduced Effects for low-end PCs.
 
+## What's new in v0.8.0 — Phase 5: online media
+
+- **Dedicated YouTube experience.** Paste any YouTube link (watch, shorts,
+  youtu.be, live, embed, or playlist) and it plays instantly in a theater
+  embed — no account, no key. Optional search uses **your own** free YouTube
+  Data API key (10,000 units/day from Google): results show real thumbnails,
+  durations, channels and view counts. Everything runs on YouTube's official
+  nocookie embed player — authorized interfaces only, no scraping, and your
+  key stays local.
+- **IPTV that actually plays.** Import standard **M3U / M3U8** playlists (the
+  format every IPTV provider exports), browse channels with logos and group
+  filters, and streams open through the **native mpv engine** — HLS, TS and
+  direct HTTP streams decode with the same pipeline as your local files.
+  Nothing runs in the background when you stop watching. Playlists can also be
+  opened by double-click (.m3u / .m3u8 are now registered OMP file types).
+- **Radio is real.** The Online → Radio tab now drives the same engine session
+  as the Music screen: the four curated stations, your custom stations, live
+  ICY "now playing" titles, stop/add/remove — and the desktop widget follows
+  along.
+- **YouTube Music tab** — music-scoped search (same optional key) plus a
+  one-click jump to the official YouTube Music in your browser.
+- **Bundled ≠ loaded** — the whole Online screen is code-split and only
+  downloads when you first visit it; the main window stays lean.
+- **Built-in public channels** — NASA TV and Red Bull TV ship preconfigured,
+  legal and free, so Live TV works out of the box.
+
 ## What's new in v0.7.0 — Phase 4: the lightweight editor
 
 - **Real editing, same engine.** The Editor screen now loads any video OMP can
@@ -276,7 +302,7 @@ at 1 Hz *only while the overlay is open* — zero idle timers, per spec).
 | Images           | libvips (Phase 2)              |
 | Database         | SQLite (Phase 2)               |
 | Project format   | JSON-based `.ompj` (Phase 4)   |
-| Online playback  | WebView2 + supported embeds    |
+| Online playback  | YouTube nocookie embeds + mpv streams |
 
 ## Development
 

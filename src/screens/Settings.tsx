@@ -7,6 +7,7 @@ import { navigate } from "../lib/router";
 import { engineStore, initEngine } from "../lib/engine";
 import { resetEngineProbe } from "../lib/audio";
 import { ffmpegStatus } from "../lib/editor";
+import { loadYtKey, saveYtKey, ytTestKey, loadChannels } from "../lib/online";
 import {
   getStats, rescan as libRescan, cancelScan, onScanEvent,
   type LibraryStats,
@@ -53,6 +54,15 @@ export function Settings({ settings, update }: { settings: SettingsShape; update
   const eng = useSyncExternalStore(engineStore.sub, engineStore.get);
   const [diag, setDiag] = useState<EngineDiag | null>(null);
   const [ffFound, setFfFound] = useState<{ found: boolean; path: string } | null>(null);
+  const [key, setKey] = useState(() => loadYtKey());
+  const [keyMsg, setKeyMsg] = useState("");
+  const [testing, setTesting] = useState(false);
+  const [chCount, setChCount] = useState(() => loadChannels().length);
+  useEffect(() => {
+    const fn = () => setChCount(loadChannels().length);
+    window.addEventListener("omp://channels-changed", fn as EventListener);
+    return () => window.removeEventListener("omp://channels-changed", fn as EventListener);
+  }, []);
   const [retesting, setRetesting] = useState(false);
 
   // live SQLite stats + scan status
@@ -296,6 +306,69 @@ export function Settings({ settings, update }: { settings: SettingsShape; update
               </button>
             ))}
           </div>
+        </div>
+      </div>
+
+      <div className="section-label">Online</div>
+      <div className="card">
+        <div className="row">
+          <span className="icon-btn"><Icon name="play" /></span>
+          <div className="row-main">
+            <div className="row-title">YouTube Data API key</div>
+            <div className="row-desc">
+              Unlocks YouTube search on the Online screen — free tier is 10,000 units/day
+              (~5,000 searches). The key stays in this browser profile, never uploaded.
+              {" "}
+              <button
+                className="btn ghost sm"
+                style={{ height: 22, padding: "0 8px", fontSize: 11 }}
+                onClick={() => void invoke("open_url", { url: "https://developers.google.com/youtube/v3/getting-started" })}
+              >
+                <Icon name="external" size={11} /> How to get one
+              </button>
+            </div>
+            <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+              <input
+                type="password"
+                className="input"
+                style={{ flex: 1, minWidth: 200, fontFamily: "var(--mono, monospace)", fontSize: 12 }}
+                placeholder="AIza…"
+                value={key}
+                onChange={(e) => setKey(e.target.value)}
+              />
+              <button
+                className="btn sm"
+                onClick={() => {
+                  saveYtKey(key);
+                  setKeyMsg(key ? "Saved" : "Cleared");
+                  if (key) {
+                    setTesting(true);
+                    void ytTestKey(key).then((r) => {
+                      setKeyMsg(`${r.ok ? "✓" : "✗"} ${r.msg}`);
+                      setTesting(false);
+                    });
+                  }
+                }}
+              >
+                Save & test
+              </button>
+            </div>
+            {keyMsg && <div style={{ fontSize: 11.5, color: keyMsg.startsWith("✓") ? "var(--ok)" : keyMsg.startsWith("✗") ? "var(--err, #ff6b6b)" : "var(--text-3)", marginTop: 6 }}>{testing ? "Testing…" : keyMsg}</div>}
+          </div>
+        </div>
+        <div className="row">
+          <span className="icon-btn"><Icon name="cast" /></span>
+          <div className="row-main">
+            <div className="row-title">IPTV playlists</div>
+            <div className="row-desc">
+              {chCount > 0
+                ? `${chCount} channels imported · M3U / M3U8 · streams play through the native engine`
+                : "No playlists yet — import an M3U / M3U8 file on the Online → Live TV tab"}
+            </div>
+          </div>
+          <button className="btn sm" onClick={() => navigate("online")}>
+            <Icon name="cast" size={13} /> Open Live TV
+          </button>
         </div>
       </div>
 

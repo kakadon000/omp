@@ -45,6 +45,9 @@
   --text-3: rgba(242, 243, 246, 0.38);
   --danger: #ff7a78;
   --ok: #6fd598;
+  --warn: #ffb454;
+  --err: #ff6b6b;
+  --mono: "Sarasa Mono SC", "Cascadia Mono", Consolas, monospace;
   --shadow: 0 16px 48px rgba(0, 0, 0, 0.42);
   --shadow-sm: 0 4px 16px rgba(0, 0, 0, 0.30);
   --scrim: rgba(8, 10, 14, 0.62);
@@ -66,6 +69,9 @@
   --text-3: rgba(25, 28, 35, 0.40);
   --danger: #c23a38;
   --ok: #0e7a3d;
+  --warn: #9a6400;
+  --err: #b3261e;
+  --mono: "Sarasa Mono SC", "Cascadia Mono", Consolas, monospace;
   --shadow: 0 16px 48px rgba(30, 40, 60, 0.18);
   --shadow-sm: 0 4px 16px rgba(30, 40, 60, 0.10);
   --scrim: rgba(240, 242, 246, 0.55);

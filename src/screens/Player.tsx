@@ -88,6 +88,8 @@ export function Player({ settings }: { settings: Settings }) {
   const vid = queue.items[queue.index] ?? queue.items[0];
   const src = custom.url || vid.src;
   const title = custom.url ? custom.name : vid.title;
+  // LIVE stream (IPTV / open radio video): no duration, no seekbar scrubbing
+  const isLive = !!custom.live && !!custom.url;
   // what the native engine opens: real file path for external files, else the
   // bundled sample (mpv resolves the basename against the app resources)
   const loadSrc = custom.path || custom.url || vid.src;
@@ -422,8 +424,9 @@ export function Player({ settings }: { settings: Settings }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isMpv]);
 
-  /** absolute seek through whichever engine is live */
+  /** absolute seek through whichever engine is live (no-op on LIVE streams) */
   const doSeek = (target: number) => {
+    if (isLive) return;
     if (isMpv) {
       void invoke("mpv_seek", { t: Math.max(0, target) });
       setTime(Math.max(0, target));
@@ -451,6 +454,7 @@ export function Player({ settings }: { settings: Settings }) {
   };
 
   const seekBy = useCallback((delta: number, msg?: string) => {
+    if (isLive) return;
     if (isMpv) {
       void invoke("mpv_seek", { t: delta, rel: true });
       setTime((t) => Math.max(0, t + delta));
@@ -463,10 +467,11 @@ export function Player({ settings }: { settings: Settings }) {
     setTime(v.currentTime);
     if (msg) showOsd(msg);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [showOsd, src, isMpv]);
+  }, [showOsd, src, isMpv, isLive]);
 
   // ---- A-B loop (native ab-loop on the mpv engine) -------------------------
   const abLoop = () => {
+    if (isLive) { showOsd("A-B loop off on live streams"); return; }
     if (isMpv) {
       if (loopA === null) {
         setLoopA(time);
@@ -1179,12 +1184,22 @@ export function Player({ settings }: { settings: Settings }) {
         <div
           className="seek-wrap"
           onMouseMove={(e) => {
+            if (isLive) return;
             const r = e.currentTarget.getBoundingClientRect();
             const p = clamp(((e.clientX - r.left - 56) / (r.width - 112)) * 100, 0, 100);
             setHoverPct(Number.isFinite(p) ? p : null);
           }}
           onMouseLeave={() => setHoverPct(null)}
         >
+          {isLive ? (
+            <>
+              <span className="live-chip on" style={{ margin: "0 8px" }}>LIVE</span>
+              <span className="seek-time">{fmtTime(displayTime)}</span>
+              <span style={{ flex: 1 }} />
+              <span className="seek-time right">direct stream</span>
+            </>
+          ) : (
+            <>
           <span className="seek-time">{fmtTime(displayTime)}</span>
           <div style={{ position: "relative", flex: 1, minWidth: 0 }}>
             <input
@@ -1208,6 +1223,8 @@ export function Player({ settings }: { settings: Settings }) {
             )}
           </div>
           <span className="seek-time right">{fmtTime(dur)}</span>
+            </>
+          )}
         </div>
 
         <div className="player-controls">
