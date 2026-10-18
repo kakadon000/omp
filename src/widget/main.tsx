@@ -3,6 +3,8 @@
 // main window's audio service and talks back through `omp://widget-cmd`,
 // so it keeps working while the main window is hidden (background playback).
 // Dragging: data-tauri-drag-region (core:window:allow-start-dragging).
+// v0.6.2: queue tap-to-jump, shuffle/repeat toggles, position memory and a
+// CSS-only playing indicator — zero extra timers, zero extra CPU when idle.
 
 import { StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -17,8 +19,10 @@ type Snap = {
   dur: number;
   live: boolean;
   icy: string;
-  queue: { id: string; title: string; artist: string; thumb: string }[];
+  queue?: { id: string; title: string; artist: string; thumb: string }[];
   qIndex: number;
+  shuffle?: boolean;
+  repeat?: boolean;
   volume: number;
 };
 
@@ -43,6 +47,8 @@ const IconUp = ({ size = 12 }: IP) => svg(size, <path d="M6 14l6-6 6 6" />);
 const IconDown = ({ size = 12 }: IP) => svg(size, <path d="M6 10l6 6 6-6" />);
 const IconX = ({ size = 11 }: IP) => svg(size, <path d="M5 5l14 14M19 5L5 19" />);
 const IconVol = ({ size = 14 }: IP) => svg(size, <><path d="M11 5L6 9H2v6h4l5 4z" fill="currentColor" stroke="none" /><path d="M15.5 8.5a5 5 0 010 7" /></>);
+const IconShuffle = ({ size = 13 }: IP) => svg(size, <><path d="M16 3h5v5" /><path d="M4 20L21 3" /><path d="M21 16v5h-5" /><path d="M15 15l6 6" /><path d="M4 4l5 5" /></>);
+const IconRepeat = ({ size = 13 }: IP) => svg(size, <><path d="M17 1l4 4-4 4" /><path d="M3 11V9a4 4 0 014-4h14" /><path d="M7 23l-4-4 4-4" /><path d="M21 13v2a4 4 0 01-4 4H3" /></>);
 
 /* ------------------------------ helpers ------------------------------ */
 const fmt = (t: number) => {
@@ -75,12 +81,53 @@ function Widget() {
     let un: (() => void) | undefined;
     let dead = false;
     void tauriListen<Snap>("omp://audio", (s) => {
-      if (s && typeof s === "object" && "track" in s) setSnap({ ...EMPTY, ...s });
+      if (s && typeof s === "object" && "track" in s) {
+        // v0.6.2: MERGE patches — the broadcast may omit the queue (perf),
+        // so keep the previous one instead of resetting to empty
+        setSnap((prev) => ({ ...EMPTY, ...prev, ...s }));
+      }
     }).then((fn) => { if (dead) fn(); else un = fn; });
     return () => { dead = true; un?.(); };
   }, []);
 
+  // v0.6.2: position memory — remember where the user dragged the widget,
+  // restore it every time the widget window appears
+  useEffect(() => {
+    if (!isTauri) return;
+    let saveTimer: number | undefined;
+    let unMoved: (() => void) | undefined;
+    let dead = false;
+    void (async () => {
+      try {
+        const saved = localStorage.getItem("omp.widget.pos");
+        if (saved) {
+          const p = JSON.parse(saved) as { x: number; y: number };
+          if (Number.isFinite(p?.x) && Number.isFinite(p?.y)) {
+            void invoke("widget_set_pos", { x: p.x, y: p.y });
+          }
+        }
+        const { getCurrentWindow } = await import("@tauri-apps/api/window");
+        const un = await getCurrentWindow().onMoved(({ payload }) => {
+          window.clearTimeout(saveTimer);
+          saveTimer = window.setTimeout(() => {
+            localStorage.setItem("omp.widget.pos", JSON.stringify({ x: payload.x, y: payload.y }));
+          }, 350);
+        });
+        if (dead) un();
+        else unMoved = un;
+      } catch {
+        /* non-fatal: widget just keeps default placement */
+      }
+    })();
+    return () => {
+      dead = true;
+      window.clearTimeout(saveTimer);
+      unMoved?.();
+    };
+  }, []);
+
   const t = snap.track;
+  const queue = snap.queue ?? [];
   const dur = snap.live ? 0 : snap.dur || (t ? 0 : 0);
   const displayPct = dur > 0 ? (scrub !== null ? scrub / dur : snap.time / dur) : 0;
 
@@ -125,7 +172,11 @@ function Widget() {
         {t ? (
           <>
             <div className="w-main">
-              <div className={`w-art${snap.live ? " live" : ""}`}>
+              <div
+                className={`w-art${snap.live ? " live" : ""}`}
+                onDoubleClick={() => void invoke("app_show_main")}
+                title="Double-click to open OMP"
+              >
                 {t.thumb ? <img src={artUrl(t.thumb)} alt="" /> : <IconNote />}
               </div>
               <div className="w-meta">
@@ -135,6 +186,11 @@ function Widget() {
                   <span className="w-live-badge"><span className="w-live-dot" /> Live radio</span>
                 )}
               </div>
+              {/* v0.6.2: CSS-only playing indicator — no timers, the animation
+                  just pauses when playback pauses */}
+              <span className={`w-eq${snap.playing ? "" : " off"}`} aria-hidden>
+                <i /><i /><i /><i />
+              </span>
               <div className="w-controls">
                 <button className="w-btn sm" onClick={() => cmd("prev")} aria-label="Previous">
                   <IconPrev />
@@ -170,14 +226,13 @@ function Widget() {
             {expanded && (
               <>
                 <div className="w-queue">
-                  {snap.queue.length > 1 ? (
-                    snap.queue.map((q, i) => (
+                  {queue.length > 1 ? (
+                    queue.map((q, i) => (
                       <div
                         key={q.id + i}
                         className={`w-q-item${i === qIdxSafe ? " on" : ""}`}
-                        onDoubleClick={() => {
-                          /* lightweight: main window handles queue jumps via next/prev only */
-                        }}
+                        onClick={() => cmd("jump", { i })}
+                        title="Play this track"
                       >
                         <span className="w-q-art">{q.thumb ? <img src={artUrl(q.thumb)} alt="" /> : <IconNote size={13} />}</span>
                         <span style={{ flex: 1, minWidth: 0 }}>
@@ -191,6 +246,28 @@ function Widget() {
                       {snap.live ? "Radio needs no queue — it just plays." : "Queue shows here when you play an album or playlist."}
                     </div>
                   )}
+                </div>
+                <div className="w-extrarow">
+                  <button
+                    className={`w-btn sm${snap.shuffle ? " on" : ""}`}
+                    onClick={() => cmd("shuffle")}
+                    title="Shuffle"
+                    aria-pressed={!!snap.shuffle}
+                  >
+                    <IconShuffle />
+                  </button>
+                  <button
+                    className={`w-btn sm${snap.repeat ? " on" : ""}`}
+                    onClick={() => cmd("repeat")}
+                    title="Repeat queue"
+                    aria-pressed={!!snap.repeat}
+                  >
+                    <IconRepeat />
+                  </button>
+                  <span style={{ flex: 1 }} />
+                  <button className="w-btn sm" title="Open OMP" onClick={() => void invoke("app_show_main")}>
+                    ⌂
+                  </button>
                 </div>
                 <div className="w-volrow">
                   <IconVol />

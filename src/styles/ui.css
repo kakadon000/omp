@@ -5,16 +5,17 @@
   background: var(--surface);
   border: 1px solid var(--stroke);
   border-radius: var(--radius-lg);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.25);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.25);
+  /* v0.6.2: dropped saturate() — same glass, measurably cheaper compositing */
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
 }
 .panel { padding: 16px; }
 .card {
   background: var(--surface);
   border: 1px solid var(--stroke);
   border-radius: var(--radius-lg);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.25);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.25);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
   transition: background 0.18s var(--ease-fluent), border-color 0.18s var(--ease-fluent), transform 0.22s var(--ease);
 }
 .card.hover:hover { background: var(--surface-2); border-color: var(--stroke-2); transform: translateY(-2px); }

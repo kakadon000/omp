@@ -94,18 +94,37 @@ try {
   bc = null;
 }
 
-function snapshot() {
-  return JSON.parse(JSON.stringify(audioStore.get()));
+// v0.6.2 perf: the queue can hold hundreds of tracks — deep-cloning and
+// re-sending it at the 4 Hz progress tick was pure waste. The full snapshot
+// now travels WITHOUT the queue unless the queue changed, plus a heartbeat
+// every ~12 broadcasts so a freshly opened widget window syncs quickly.
+// The widget merges incoming patches over its previous state, so an omitted
+// queue simply means "unchanged".
+let lastQueueJson = "";
+let bcastCount = 0;
+
+function snapshotSmart(): Record<string, unknown> {
+  const st = audioStore.get();
+  const qj = JSON.stringify(st.queue);
+  const includeQueue = qj !== lastQueueJson || bcastCount % 12 === 0;
+  bcastCount++;
+  if (includeQueue) lastQueueJson = qj;
+  const copy: Record<string, unknown> = JSON.parse(
+    JSON.stringify({ ...st, queue: undefined })
+  );
+  if (includeQueue) copy.queue = JSON.parse(qj);
+  return copy;
 }
 
 function broadcast() {
-  if (!isTauri) return;
-  void tauriEmit("omp://audio", snapshot());
+  const snap = snapshotSmart();
+  if (isTauri) void tauriEmit("omp://audio", snap);
   try {
-    bc?.postMessage(snapshot());
+    bc?.postMessage(snap);
   } catch {
     /* channel closed */
   }
+  syncMediaSession();
 }
 
 /* ------------------------------ engine ------------------------------ */
@@ -123,20 +142,46 @@ if (el) {
 }
 
 let attached = false;
+// v0.6.2: after a failed engine bring-up, STOP retrying on every track —
+// the fallback engine takes over instantly instead. Cleared by the Settings
+// "Re-test engine" button (resetEngineProbe).
+let engineBroken = false;
+let lastEngineError = "";
+
+export function resetEngineProbe() {
+  engineBroken = false;
+  attached = false;
+  lastEngineError = "";
+}
+
 async function ensureEngine(): Promise<boolean> {
   if (!isTauri) return false;
   if (attached) return true;
+  if (engineBroken) return false;
   const st = await invoke<{ available?: boolean; active?: boolean }>("mpv_status");
-  if (!st?.available) return false;
-  if (!st?.active) {
-    // attach the engine with a HIDDEN surface (audio never shows a picture)
-    const r1 = await invoke<{ active?: boolean }>("mpv_attach", { hwdec: "no", show: false });
-    if (!r1?.active) {
-      // one retry — a first-attach race (window creation during boot) can
-      // transiently fail; a beat later it goes through
-      await new Promise((r) => setTimeout(r, 250));
-      const r2 = await invoke<{ active?: boolean }>("mpv_attach", { hwdec: "no", show: false });
-      if (!r2?.active) return false;
+  if (!st?.available) {
+    engineBroken = true;
+    lastEngineError = "native engine DLL unavailable";
+    return false;
+  }
+  // attach in AUDIO mode — surface-less (Rust reconciles the instance kind
+  // if a video session is live, rebuilding the engine in the right mode)
+  const r1 = await invoke<{ active?: boolean; error?: string | null }>("mpv_attach", {
+    hwdec: "no",
+    show: false,
+  });
+  if (!r1?.active) {
+    // one retry — a first-attach race (window creation during boot) can
+    // transiently fail; a beat later it goes through
+    await new Promise((r) => setTimeout(r, 250));
+    const r2 = await invoke<{ active?: boolean; error?: string | null }>("mpv_attach", {
+      hwdec: "no",
+      show: false,
+    });
+    if (!r2?.active) {
+      engineBroken = true;
+      lastEngineError = r2?.error || r1?.error || "engine attach failed";
+      return false;
     }
   }
   attached = true;
@@ -173,19 +218,55 @@ async function playInner(t: AudioTrack) {
   });
   const engineOk = await ensureEngine();
   if (engineOk) {
-    const ok = await invoke<boolean>("mpv_load", { source: t.src, start: null });
+    let ok = await invoke<boolean>("mpv_load", { source: t.src, start: null });
+    if (!ok) {
+      // v0.6.2 stale-latch repair: a video session may have rebuilt or
+      // released the engine since we attached (Player unmount detaches and
+      // Rust never told us). Drop the latch and rebuild once before giving
+      // up — this is what made music permanently dead after watching video.
+      attached = false;
+      if (await ensureEngine()) {
+        ok = await invoke<boolean>("mpv_load", { source: t.src, start: null });
+      }
+    }
     if (!ok) {
       audioStore.set({ playing: false });
       toast("The engine refused this file — it may be corrupt or an unsupported stream", "err");
     } else {
       await invoke("mpv_set_volume", { v: Math.round(audioStore.get().volume * 100) });
     }
-  } else if (isTauri) {
-    // v0.6.1: NO silent web fallback inside the app — an HTMLAudioElement
-    // cannot play a raw filesystem path, so "playing" would be a lie with
-    // zero sound. Surface the real problem instead.
-    audioStore.set({ playing: false });
-    toast("Native engine unavailable — open Settings → Playback for diagnostics", "err");
+  } else if (isTauri && el) {
+    // v0.6.2: RESILIENT FALLBACK — the WebView audio element CAN play any
+    // local file through the asset protocol (convertFileSrc), so music no
+    // longer dies just because libmpv is missing or blocked. Radio streams
+    // (http) play directly. Quality is slightly lower than mpv; every
+    // control (queue, shuffle, widget, media keys) keeps working.
+    let src = t.src;
+    if (src.startsWith("./")) {
+      // bundled demo assets are served by the tauri http origin
+      try {
+        src = new URL(src, globalThis.location.origin).href;
+      } catch {
+        /* keep as-is */
+      }
+    } else if (!/^(https?|data|blob):/i.test(src)) {
+      src = convertFileSrc(src);
+    }
+    el.src = src;
+    el.volume = audioStore.get().volume;
+    try {
+      await el.play();
+    } catch {
+      audioStore.set({ playing: false });
+      toast("Could not play this file", "err");
+      return;
+    }
+    if (lastEngineError) {
+      toast(
+        `Playing with the built-in audio engine — ${lastEngineError} (Settings → Playback has diagnostics)`,
+        "info"
+      );
+    }
   } else if (el) {
     el.src = t.src;
     el.volume = audioStore.get().volume;
@@ -287,7 +368,7 @@ export function next(dir: 1 | -1 = 1) {
 
 export function stopSession() {
   if (isTauri && attached) void invoke("mpv_stop");
-  else if (el) {
+  if (el) {
     el.pause();
     el.removeAttribute("src");
   }
@@ -312,7 +393,11 @@ function onEnded() {
 
 /* --------------------- engine events (Tauri only) -------------------- */
 
-type MpvEvt = { kind: string; t?: number; d?: number; paused?: boolean; path?: string; title?: string };
+type MpvEvt = { kind: string; t?: number; d?: number; paused?: boolean; path?: string; title?: string; msg?: string };
+
+// consecutive engine file errors — auto-skip guard so a broken track list
+// doesn't machine-gun through the whole queue
+let consecutiveErrors = 0;
 
 if (isTauri) {
   onMpvEvent((e: MpvEvt) => {
@@ -330,6 +415,7 @@ if (isTauri) {
         }
         break;
       case "loaded":
+        consecutiveErrors = 0;
         // ownership reconciliation: a video loadfile took the engine over
         if (e.path && e.path !== currentSrc && !e.path.endsWith(currentSrc.split(/[\\/]/).pop() || "#")) {
           audioStore.set({ track: null, playing: false, time: 0, dur: 0, live: false, icy: "" });
@@ -347,6 +433,16 @@ if (isTauri) {
       case "icy":
         audioStore.set({ icy: e.title ?? "" });
         break;
+      case "file-error":
+        // v0.6.2: the engine failed on THIS file — used to be silent (the UI
+        // just froze on "playing" with no sound). Now: honest toast + skip.
+        audioStore.set({ playing: false });
+        toast(`Playback failed: ${e.msg || "the engine could not decode this file"}`, "err");
+        consecutiveErrors++;
+        if (consecutiveErrors < 3 && st.queue.length > 1) {
+          setTimeout(() => next(1), 700);
+        }
+        break;
       case "died":
         attached = false;
         break;
@@ -354,7 +450,8 @@ if (isTauri) {
   });
 
   // desktop widget → main-window service (widget has no direct store access)
-  void tauriListen<{ a: string; t?: number; v?: number }>("omp://widget-cmd", (cmd) => {
+  void tauriListen<{ a: string; t?: number; v?: number; i?: number }>("omp://widget-cmd", (cmd) => {
+    const st = audioStore.get();
     switch (cmd.a) {
       case "toggle":
         void toggle();
@@ -371,8 +468,62 @@ if (isTauri) {
       case "vol":
         if (typeof cmd.v === "number") setVolume(cmd.v);
         break;
+      case "jump":
+        // v0.6.2: tap a queue row in the widget → play that track now
+        if (typeof cmd.i === "number" && st.queue[cmd.i]) playTracks(st.queue, cmd.i);
+        break;
+      case "shuffle":
+        setShuffle(!st.shuffle);
+        break;
+      case "repeat":
+        setRepeat(!st.repeat);
+        break;
     }
   });
+}
+
+/* ------------------- Windows media keys / media overlay ------------------- */
+// navigator.mediaSession → WebView2 surfaces play/pause/prev/next + metadata
+// (title · artist · cover art) in the Windows media flyout, and hardware
+// media keyboard keys light up. Cheap, standard, no native code.
+
+function syncMediaSession() {
+  if (typeof navigator === "undefined" || !("mediaSession" in navigator)) return;
+  const ms = (navigator as unknown as { mediaSession: MediaSession }).mediaSession;
+  try {
+    const st = audioStore.get();
+    const t = st.track;
+    if (!t) {
+      ms.metadata = null;
+      ms.playbackState = "paused";
+      return;
+    }
+    ms.playbackState = st.playing ? "playing" : "paused";
+    const art = trackArt(t);
+    ms.metadata = new MediaMetadata({
+      title: st.live && st.icy ? st.icy : t.title,
+      artist: t.artist,
+      album: t.album,
+      artwork: art ? [{ src: art, sizes: "512x512", type: "image/jpeg" }] : [],
+    });
+  } catch {
+    /* metadata glitches are non-fatal */
+  }
+}
+
+if (typeof navigator !== "undefined" && "mediaSession" in navigator) {
+  try {
+    const ms = (navigator as unknown as { mediaSession: MediaSession }).mediaSession;
+    ms.setActionHandler("play", () => void toggle());
+    ms.setActionHandler("pause", () => void toggle());
+    ms.setActionHandler("previoustrack", () => next(-1));
+    ms.setActionHandler("nexttrack", () => next(1));
+    ms.setActionHandler("seekto", (d: MediaSessionActionDetails) => {
+      if (typeof d.seekTime === "number") seek(d.seekTime);
+    });
+  } catch {
+    /* older WebView — ignore */
+  }
 }
 
 let lastNote = 0;

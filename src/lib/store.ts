@@ -22,7 +22,7 @@ export type Settings = {
 const DEFAULTS: Settings = {
   theme: "dark",
   accent: "blue",
-  transparency: 0.65,
+  transparency: 0.78,
   effects: "auto",
   hwAccel: true,
   engine: "auto",

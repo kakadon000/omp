@@ -247,6 +247,36 @@ fn widget_set_expanded(app: tauri::AppHandle, expanded: bool) -> bool {
     false
 }
 
+/// v0.6.2 — widget position memory: the widget UI saves where the user dragged
+/// it (localStorage) and replays it here on every show. Clamped so at least
+/// 60 px of the widget stays reachable even if the monitor layout changed.
+#[tauri::command]
+fn widget_set_pos(app: tauri::AppHandle, x: f64, y: f64) -> bool {
+    if let Some(w) = app.get_webview_window("widget") {
+        let mut px = x.round() as i32;
+        let mut py = y.round() as i32;
+        if let Ok(Some(mon)) = w.current_monitor() {
+            let mp = mon.position();
+            let ms = mon.size();
+            let ws = w.outer_size().unwrap_or(tauri::PhysicalSize::new(360, 150));
+            let ww = ws.width as i32;
+            let min_x = mp.x - (ww - 60).max(0);
+            let max_x = mp.x + ms.width as i32 - 60;
+            let min_y = mp.y;
+            let max_y = mp.y + ms.height as i32 - 60;
+            if max_x > min_x {
+                px = px.clamp(min_x, max_x);
+            }
+            if max_y > min_y {
+                py = py.clamp(min_y, max_y);
+            }
+        }
+        let _ = w.set_position(tauri::PhysicalPosition::new(px, py));
+        return true;
+    }
+    false
+}
+
 /// Widget → bring the (possibly hidden) main window back.
 #[tauri::command]
 fn app_show_main(app: tauri::AppHandle) -> bool {
@@ -346,6 +376,7 @@ pub fn run() {
             mpv::mpv_set_track,
             mpv::mpv_snapshot,
             mpv::mpv_stats,
+            mpv::mpv_retest,
             library::library_add_folder,
             library::library_folders,
             library::library_remove_folder,
@@ -367,6 +398,7 @@ pub fn run() {
             library::playlist_items,
             widget_toggle,
             widget_set_expanded,
+            widget_set_pos,
             app_show_main,
             app_quit,
             set_background_playback,

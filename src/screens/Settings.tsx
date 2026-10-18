@@ -1,10 +1,11 @@
 import { useState, useEffect, useSyncExternalStore } from "react";
 import { Icon } from "../components/Icon";
 import { toast } from "../components/Toast";
-import type { Settings } from "../lib/store";
+import type { Settings as SettingsShape } from "../lib/store";
 import { APP_VERSION, isTauri, invoke } from "../lib/tauri";
 import { navigate } from "../lib/router";
 import { engineStore, initEngine } from "../lib/engine";
+import { resetEngineProbe } from "../lib/audio";
 import {
   getStats, rescan as libRescan, cancelScan, onScanEvent,
   type LibraryStats,
@@ -19,6 +20,24 @@ type EngineDiag = {
   version: string | null;
 };
 
+/** Human-readable hints for the Win32 LoadLibrary error codes users hit. */
+function loadErrorHint(code: number): string {
+  switch (code) {
+    case 2:
+      return "the file was not found — reinstall OMP";
+    case 5:
+      return "access denied — your antivirus is most likely blocking it; add OMP to the allowlist";
+    case 126:
+      return "the DLL (or one of its dependencies) is missing or blocked — reinstall OMP and check your antivirus";
+    case 193:
+      return "wrong architecture — reinstall the 64-bit installer";
+    case 1114:
+      return "the DLL failed during initialisation — update your GPU driver and try again";
+    default:
+      return "reinstall OMP, and allow it in your antivirus if it keeps failing";
+  }
+}
+
 function Switch({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
   return (
     <label className="switch">
@@ -28,10 +47,11 @@ function Switch({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
   );
 }
 
-export function Settings({ settings, update }: { settings: Settings; update: (p: Partial<Settings>) => void }) {
+export function Settings({ settings, update }: { settings: SettingsShape; update: (p: Partial<SettingsShape>) => void }) {
   const [stats, setStats] = useState<LibraryStats | null>(null);
   const eng = useSyncExternalStore(engineStore.sub, engineStore.get);
   const [diag, setDiag] = useState<EngineDiag | null>(null);
+  const [retesting, setRetesting] = useState(false);
 
   // live SQLite stats + scan status
   useEffect(() => {
@@ -58,6 +78,26 @@ export function Settings({ settings, update }: { settings: Settings; update: (p:
         toast("Native mpv engine not found in this install — staying on WebView", "info");
       }
     });
+  };
+
+  // v0.6.2 — re-probe the engine DLL without restarting OMP (e.g. after the
+  // user whitelists it in antivirus). Also resets the audio service's
+  // broken-engine latch so the native path is tried again immediately.
+  const retestEngine = async () => {
+    setRetesting(true);
+    try {
+      const ok = await invoke<boolean>("mpv_retest");
+      resetEngineProbe();
+      await initEngine(settings.engine);
+      const d = await invoke<EngineDiag>("mpv_diag");
+      setDiag(d);
+      toast(
+        ok ? "Engine loads now — try playing music again" : "Engine still unavailable — see the message below",
+        ok ? "ok" : "err"
+      );
+    } finally {
+      setRetesting(false);
+    }
   };
 
   const rescan = async () => {
@@ -146,12 +186,15 @@ export function Settings({ settings, update }: { settings: Settings; update: (p:
             <div className="row-title">Native mpv engine not active</div>
             <div className="row-desc">
               {diag && diag.load_error
-                ? `The bundled engine DLL exists but Windows refused to load it (error ${diag.load_error}). Try: reinstall OMP, allow it in your antivirus, or update your GPU driver.`
+                ? `The bundled engine DLL exists but Windows refused to load it (error ${diag.load_error}): ${loadErrorHint(diag.load_error)}. Music still plays via the built-in audio engine.`
                 : diag && diag.dll_path
-                  ? "The engine DLL was found but did not initialise — reinstalling usually fixes this."
-                  : "This install can't find the bundled engine, so playback falls back to WebView2 (higher CPU, fewer formats). Re-run the latest installer — it closes OMP and repairs locked files automatically."}
+                  ? "The engine DLL was found but did not initialise — reinstalling usually fixes this. Music still plays via the built-in audio engine."
+                  : "This install can't find the bundled engine. Music still plays via the built-in audio engine; videos fall back to WebView2 (higher CPU, fewer formats). Re-run the latest installer — it closes OMP and repairs locked files automatically."}
             </div>
           </div>
+          <button className="btn sm" disabled={retesting} onClick={() => void retestEngine()}>
+            <Icon name="rotate" size={14} /> {retesting ? "Testing…" : "Re-test engine"}
+          </button>
         </div>
       )}
       <div className="card">
@@ -290,10 +333,15 @@ export function Settings({ settings, update }: { settings: Settings; update: (p:
                 {diag.available
                   ? `libmpv ${diag.version ?? "?"} · ${diag.initialized ? "engine running" : "engine ready (loads on demand)"}${diag.dll_path ? ` · ${diag.dll_path}` : ""}`
                   : diag.load_error
-                    ? `Engine DLL failed to load (Windows error ${diag.load_error})${diag.probed_path ? ` — ${diag.probed_path}` : ""}. Antivirus quarantine or a missing GPU runtime are the usual causes.`
+                    ? `Engine DLL failed to load (Windows error ${diag.load_error}) — ${loadErrorHint(diag.load_error)}${diag.probed_path ? ` · ${diag.probed_path}` : ""}`
                     : "No engine DLL found in this install — reinstall OMP."}
               </div>
             </div>
+            {!diag.available && (
+              <button className="btn sm" disabled={retesting} onClick={() => void retestEngine()}>
+                <Icon name="rotate" size={14} /> {retesting ? "Testing…" : "Re-test"}
+              </button>
+            )}
             <span className="badge" style={diag.available ? { color: "var(--accent)", borderColor: "var(--accent-dim)" } : undefined}>
               {diag.available ? "OK" : "FAIL"}
             </span>

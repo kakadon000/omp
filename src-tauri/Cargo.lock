@@ -2184,7 +2184,7 @@ dependencies = [
 
 [[package]]
 name = "omp"
-version = "0.6.0"
+version = "0.6.2"
 dependencies = [
  "rusqlite",
  "serde",

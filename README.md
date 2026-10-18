@@ -27,6 +27,46 @@ distinctive, not into reinventing video decoding.
 - **Theme Studio** — dark/light/system, five tasteful accents, adjustable
   transparency, Reduced Effects for low-end PCs.
 
+## What's new in v0.6.2 — music that always plays + widget 2.0
+
+- **Music bulletproofed at the engine root.** Three stacked causes found and
+  fixed: (1) the libmpv core was initialised with mpv's default `idle=no` —
+  an empty core **shuts itself down immediately**, so audio sessions could be
+  born dead before the first song ever loaded (`idle=yes` now); (2) audio
+  attaches used to build the *video* pipeline too (child HWND + embedded
+  surface + GPU video output) — audio now runs **surface-less** (`vo=null`,
+  no HWND), so machines whose video path fails can still play every audio
+  format, and audio/video sessions cleanly rebuild the engine when they
+  take over from each other; (3) when the engine core dies, the stale
+  instance now un-registers itself so the next play re-attaches instead of
+  failing forever.
+- **A music engine that cannot die.** If libmpv is missing or blocked on
+  your machine (antivirus quarantine is the #1 cause), OMP no longer gives
+  up: the built-in WebView audio engine takes over automatically and plays
+  your files through the asset protocol — same queue, shuffle, repeat,
+  desktop widget and progress. A toast tells you when it happens, and
+  **Settings → Playback → Re-test engine** re-probes the DLL after you fix
+  the cause (no restart needed).
+- **Engine errors are now words, not silence.** Failed attaches carry the
+  exact reason (`mpv_initialize failed: …`) to toasts and diagnostics, the
+  Win32 load-error codes got human hints (5 = antivirus, 126 = blocked DLL,
+  193 = wrong arch, 1114 = GPU runtime), and playback errors mid-file no
+  longer freeze the UI on a fake "playing" state — you get a toast and an
+  auto-skip to the next track.
+- **Windows media keys + media overlay.** Title, artist and cover art now
+  surface in the Windows media flyout, and your keyboard's media keys
+  (play/pause/next/previous) control OMP.
+- **Widget 2.0.** Tap any queue row to jump to that track, shuffle and
+  repeat toggles, double-click the artwork to bring OMP back, a CSS-only
+  playing indicator (zero timers, zero CPU when paused) and **position
+  memory** — the widget reopens exactly where you dragged it, clamped so it
+  can never get lost off-screen.
+- **More translucent, less work.** Dark-theme surfaces and the widget card
+  got lighter alpha layers (airier glass), and the panel blur dropped its
+  `saturate()` pass — same look, cheaper compositing. The audio broadcast
+  to the widget no longer re-sends the whole queue at the 4 Hz progress
+  tick (queue travels only when it changes).
+
 ## What's new in v0.6.1 — the bug-fix round
 
 - **Desktop widget: fixed.** The widget window was created inside a

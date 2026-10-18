@@ -8,11 +8,17 @@ pub struct Status {
     pub available: bool,
     pub active: bool,
     pub version: Option<String>,
+    pub error: Option<String>,
 }
 
 #[tauri::command]
 pub fn mpv_status() -> Status {
-    Status { available: false, active: false, version: None }
+    Status { available: false, active: false, version: None, error: None }
+}
+
+#[tauri::command]
+pub fn mpv_retest() -> bool {
+    false
 }
 
 #[tauri::command]

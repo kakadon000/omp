@@ -2,9 +2,11 @@
    The window itself is frameless + always-on-top + transparent (Rust side). */
 
 :root {
-  --w-surface: rgba(17, 19, 26, 0.94);
+  /* v0.6.2: MORE TRANSLUCENT — pure rgba, still zero backdrop-filter (drag
+     stays butter-smooth; translucency via alpha has no per-frame cost) */
+  --w-surface: rgba(15, 17, 24, 0.78);
   --w-surface-2: rgba(255, 255, 255, 0.07);
-  --w-stroke: rgba(255, 255, 255, 0.12);
+  --w-stroke: rgba(255, 255, 255, 0.14);
   --w-text: #f2f4f8;
   --w-text-2: rgba(242, 244, 248, 0.62);
   --w-accent: #4f8cff;
@@ -38,14 +40,18 @@ body {
   flex-direction: column;
   border-radius: var(--w-radius);
   border: 1px solid var(--w-stroke);
-  /* v0.6.1: NO backdrop-filter here. On a transparent always-on-top window
+  /* v0.6.2: NO backdrop-filter here. On a transparent always-on-top window
      the blur samples the whole desktop on every compositor frame — it made
-     dragging feel like wading through mud. A near-opaque gradient looks the
-     same and drags butter-smooth. */
+     dragging feel like wading through mud. A translucent gradient looks
+     airy and drags butter-smooth. */
   background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0) 42%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.085), rgba(255, 255, 255, 0.015) 46%),
+    linear-gradient(160deg, rgba(79, 140, 255, 0.10), rgba(79, 140, 255, 0) 38%),
     var(--w-surface);
-  box-shadow: 0 14px 44px rgba(0, 0, 0, 0.5), 0 2px 8px rgba(0, 0, 0, 0.35);
+  box-shadow:
+    0 14px 44px rgba(0, 0, 0, 0.45),
+    0 2px 8px rgba(0, 0, 0, 0.3),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
   overflow: hidden;
 }
 
@@ -114,6 +120,27 @@ body {
 @keyframes w-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
 
 .w-controls { display: flex; align-items: center; gap: 2px; flex: none; }
+
+/* ---- v0.6.2: CSS-only playing indicator (4 bars) ----
+   Pure keyframes, animation-play-state pauses when .off — zero JS timers. */
+.w-eq {
+  display: inline-flex; align-items: flex-end; gap: 2px;
+  height: 14px; flex: none; margin-right: 2px;
+}
+.w-eq i {
+  width: 3px; border-radius: 2px;
+  background: var(--w-accent); opacity: 0.9;
+  animation: w-eq-bounce 1.05s ease-in-out infinite;
+}
+.w-eq i:nth-child(1) { height: 6px; animation-delay: 0s; }
+.w-eq i:nth-child(2) { height: 12px; animation-delay: 0.18s; }
+.w-eq i:nth-child(3) { height: 8px; animation-delay: 0.36s; }
+.w-eq i:nth-child(4) { height: 11px; animation-delay: 0.54s; }
+.w-eq.off i { animation-play-state: paused; opacity: 0.28; }
+@keyframes w-eq-bounce {
+  0%, 100% { transform: scaleY(0.45); }
+  50% { transform: scaleY(1); }
+}
 .w-btn {
   width: 30px; height: 30px; border: 0; border-radius: 8px;
   background: transparent; color: var(--w-text);
@@ -122,6 +149,8 @@ body {
 }
 .w-btn:hover { background: var(--w-surface-2); }
 .w-btn.sm { width: 26px; height: 26px; color: var(--w-text-2); }
+.w-btn.sm.on { color: var(--w-accent); background: rgba(79, 140, 255, 0.16); }
+.w-btn.on { color: var(--w-accent); }
 .w-btn.play {
   width: 36px; height: 36px; border-radius: 99px;
   background: var(--w-accent); color: #fff;
@@ -174,6 +203,12 @@ body {
 
 .w-volrow { flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--w-stroke); }
 .w-volrow svg { width: 14px; height: 14px; color: var(--w-text-2); flex: none; }
+
+/* ---- v0.6.2: shuffle / repeat / open row (expanded mode) ---- */
+.w-extrarow {
+  flex: none; display: flex; align-items: center; gap: 4px;
+  padding: 2px 10px 8px;
+}
 
 .w-nothing {
   flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;

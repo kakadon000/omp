@@ -31,11 +31,13 @@
 
 /* ---------------- dark theme (default) ---------------- */
 :root[data-theme="dark"] {
-  --bg: rgba(30, 32, 38, 0.78);
+  /* v0.6.2: lighter surfaces — the Mica/acrylic window material shows
+     through more, the UI reads airier (user ask: "more translucent") */
+  --bg: rgba(30, 32, 38, 0.66);
   --bg-solid: #1e2026;
-  --surface: rgba(255, 255, 255, 0.052);
-  --surface-2: rgba(255, 255, 255, 0.085);
-  --surface-3: rgba(255, 255, 255, 0.12);
+  --surface: rgba(255, 255, 255, 0.044);
+  --surface-2: rgba(255, 255, 255, 0.075);
+  --surface-3: rgba(255, 255, 255, 0.11);
   --stroke: rgba(255, 255, 255, 0.085);
   --stroke-2: rgba(255, 255, 255, 0.14);
   --text: #f2f3f6;

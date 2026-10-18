@@ -14,7 +14,7 @@
 use std::ffi::{c_char, c_void, CString};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use serde::Serialize;
@@ -246,10 +246,31 @@ unsafe fn load_api() -> Option<MpvApi> {
     })
 }
 
-static API: OnceLock<Option<MpvApi>> = OnceLock::new();
+/// Engine API cache. A Mutex (not OnceLock) so `mpv_retest` can CLEAR it:
+/// if the user whitelists the DLL in their antivirus after a failed probe,
+/// the next api() call must re-run LoadLibraryW instead of remembering None.
+static API: Mutex<Option<Arc<MpvApi>>> = Mutex::new(None);
 
-pub(crate) fn api() -> Option<&'static MpvApi> {
-    API.get_or_init(|| unsafe { load_api() }).as_ref()
+pub(crate) fn api() -> Option<Arc<MpvApi>> {
+    if let Ok(g) = API.lock() {
+        if let Some(a) = g.as_ref() {
+            return Some(Arc::clone(a));
+        }
+    }
+    let loaded = unsafe { load_api() }.map(Arc::new);
+    let mut g = API.lock().ok()?;
+    if g.is_none() {
+        *g = loaded;
+    }
+    g.as_ref().map(Arc::clone)
+}
+
+/// v0.6.2 — drop the cached probe so the next api() re-probes from scratch.
+/// Wired to the Settings "Re-test engine" button.
+pub(crate) fn reset_api() {
+    if let Ok(mut g) = API.lock() {
+        *g = None;
+    }
 }
 
 fn err_str(a: &MpvApi, code: i32) -> String {
@@ -305,9 +326,16 @@ struct Instance {
     h: SendPtr,
     hwnd: HWND,
     shown: bool,
+    /// v0.6.2: KIND_VIDEO keeps the embedded surface + GPU VO;
+    /// KIND_AUDIO is surface-less (no HWND, vo=null) so audio never
+    /// depends on the video pipeline at all.
+    kind: u8,
     stop: Arc<AtomicBool>,
     joined: Option<std::thread::JoinHandle<()>>,
 }
+
+const KIND_VIDEO: u8 = 0;
+const KIND_AUDIO: u8 = 1;
 
 /// mpv handles are documented thread-safe for property/command calls;
 /// wrap the raw pointer so the event-pump thread can own a copy.
@@ -323,6 +351,9 @@ pub struct Status {
     pub available: bool,
     pub active: bool,
     pub version: Option<String>,
+    /// v0.6.2: WHY the last attach failed ("mpv_initialize failed: …") —
+    /// surfaces in the UI toast + Settings instead of failing silently.
+    pub error: Option<String>,
 }
 
 /// "2.3" style libmpv client API version for the UI.
@@ -389,6 +420,7 @@ fn percent_decode(s: &str) -> String {
 fn pump(h: SendPtr, app: AppHandle, stop: Arc<AtomicBool>) {
     let h = h.0;
     let Some(a) = api() else { return };
+    let a = a.as_ref(); // &MpvApi — the Arc stays alive in the shadowed binding
     let mut last_tick = Instant::now() - std::time::Duration::from_secs(1);
     unsafe {
         loop {
@@ -403,6 +435,25 @@ fn pump(h: SendPtr, app: AppHandle, stop: Arc<AtomicBool>) {
             let data = (*ev).data;
             match id {
                 EV_SHUTDOWN => {
+                    // v0.6.2: the core is gone — self-remove the stale instance
+                    // so mpv_status().active goes false and the next play
+                    // cleanly re-attaches (previously the dead instance stayed
+                    // registered and every later mpv_load failed forever).
+                    let mut drop_hwnd: HWND = 0;
+                    if let Ok(mut g) = MPV.lock() {
+                        let mine = g.as_ref().map(|i| i.h.0 == h).unwrap_or(false);
+                        if mine {
+                            drop_hwnd = g.as_ref().map(|i| i.hwnd).unwrap_or(0);
+                            *g = None;
+                        }
+                    }
+                    if drop_hwnd != 0 {
+                        // the surface was created on the main thread — destroy
+                        // it there too (Win32 rule, background threads can't)
+                        let _ = app.run_on_main_thread(move || unsafe {
+                            DestroyWindow(drop_hwnd);
+                        });
+                    }
                     let _ = app.emit("omp://mpv", serde_json::json!({ "kind": "died" }));
                     break;
                 }
@@ -495,7 +546,7 @@ fn with_instance<T>(f: impl FnOnce(&Instance, &MpvApi) -> T) -> Option<T> {
     let guard = MPV.lock().ok()?;
     let inst = guard.as_ref()?;
     let a = api()?;
-    Some(f(inst, a))
+    Some(f(inst, &a))
 }
 
 #[tauri::command]
@@ -506,70 +557,109 @@ pub fn mpv_status() -> Status {
         available: a.is_some(),
         active,
         version: a.map(|a| unsafe { api_version_string((a.client_api_version)()) }),
+        error: None,
     }
+}
+
+/// v0.6.2 — Settings "Re-test engine": forget the cached LoadLibrary probe
+/// so a repaired environment (DLL whitelisted in antivirus, driver updated,
+/// installer re-run) is picked up without restarting OMP.
+#[tauri::command]
+pub fn mpv_retest() -> bool {
+    reset_api();
+    api().is_some()
 }
 
 #[tauri::command]
 pub fn mpv_attach(app: AppHandle, hwdec: Option<String>, show: Option<bool>) -> Status {
-    let show_surface = show.unwrap_or(true);
-    let st = mpv_status();
+    let video = show.unwrap_or(true);
+    let mut st = mpv_status();
     if !st.available {
+        st.error = Some("The libmpv engine DLL is missing or refused to load in this install".into());
         return st;
     }
-    // already attached → surface policy only. Audio sessions attach hidden
-    // (show=false) so the empty video surface never blacks out the UI.
+    // v0.6.2: the engine is GLOBAL — reconcile the instance KIND with the
+    // request. Audio sessions run surface-less (no child HWND, no wid,
+    // vo=null): audio never depended on the GPU, so machines whose video VO
+    // fails can still play every audio format. A kind mismatch (video
+    // requested while an audio instance is live, or the reverse) releases
+    // the old instance and rebuilds in the right mode.
     if st.active {
-        if show_surface {
-            if let Some(hwnd) = with_instance(|i, _| i.hwnd) {
-                unsafe {
-                    ShowWindow(hwnd, SW_SHOW);
+        let want = if video { KIND_VIDEO } else { KIND_AUDIO };
+        let have = with_instance(|i, _| i.kind).unwrap_or(want);
+        if have == want {
+            if video {
+                if let Some(hwnd) = with_instance(|i, _| i.hwnd) {
+                    unsafe {
+                        ShowWindow(hwnd, SW_SHOW);
+                    }
                 }
+                // video is back on screen — same CPU rule as a fresh attach
+                crate::set_playback_effects(&app, true);
             }
-            // video is back on screen — same CPU rule as a fresh attach
-            crate::set_playback_effects(&app, true);
+            return st;
         }
-        return st;
+        detach_impl();
+        st = mpv_status();
     }
 
-    let Some(main) = app.get_webview_window("main") else { return st };
-    let Ok(parent) = main.hwnd() else { return st };
-    let parent_hwnd = parent.0 as isize;
     let app2 = app.clone();
 
-    // create the child window on the main (event-loop) thread
-    let (tx, rx) = std::sync::mpsc::channel();
-    let spawn = app.run_on_main_thread(move || unsafe {
-        let _ = tx.send(create_surface(parent_hwnd, "OMP_MPV_SURF"));
-    });
-    if spawn.is_err() {
-        return st;
-    }
-    let hwnd = match rx.recv() {
-        Ok(Ok(h)) => h,
-        _ => return st,
+    // video mode parks a child HWND below the webview; audio mode is
+    // surface-less (hwnd stays 0)
+    let hwnd: HWND = if video {
+        let Some(main) = app.get_webview_window("main") else {
+            st.error = Some("main window not found".into());
+            return st;
+        };
+        let Ok(parent) = main.hwnd() else {
+            st.error = Some("could not read the main window handle".into());
+            return st;
+        };
+        let parent_hwnd = parent.0 as isize;
+        // create the child window on the main (event-loop) thread
+        let (tx, rx) = std::sync::mpsc::channel();
+        let spawn = app.run_on_main_thread(move || unsafe {
+            let _ = tx.send(create_surface(parent_hwnd, "OMP_MPV_SURF"));
+        });
+        if spawn.is_err() {
+            st.error = Some("could not schedule the video surface".into());
+            return st;
+        }
+        match rx.recv() {
+            Ok(Ok(h)) => h,
+            _ => {
+                st.error = Some("video surface creation failed".into());
+                return st;
+            }
+        }
+    } else {
+        0
     };
 
     let Some(a) = api() else { return st };
     unsafe {
         let h = (a.create)();
         if h.is_null() {
-            DestroyWindow(hwnd);
+            if hwnd != 0 {
+                DestroyWindow(hwnd);
+            }
+            st.error = Some("mpv_create failed — the DLL loaded but could not build a core".into());
             return st;
         }
-        // wid embed: set BEFORE initialize — numeric HWND string
-        let n_wid = CString::new("wid").unwrap();
-        let wid_str: CString = CString::new(hwnd.to_string()).unwrap();
-        (a.set_option_string)(h, n_wid.as_ptr(), wid_str.as_ptr());
+        if video {
+            // wid embed: set BEFORE initialize — numeric HWND string
+            let n_wid = CString::new("wid").unwrap();
+            let wid_str: CString = CString::new(hwnd.to_string()).unwrap();
+            (a.set_option_string)(h, n_wid.as_ptr(), wid_str.as_ptr());
+        }
         for (k, v) in [
-            ("vo", "gpu-next,gpu"),
-            // "auto-safe" refuses hwdec on non-whitelisted drivers → silent
-            // software decode → CPU burn. "auto" still falls back to SW when
-            // genuinely unsupported, but takes the GPU path far more often.
-            ("hwdec", hwdec.as_deref().unwrap_or("auto")),
-            ("hwdec-codecs", "all"),
-            // software-decode fast paths (no-ops when hardware decode engages)
-            ("vd-lavc-fast", "yes"),
-            ("vd-lavc-skiploopfilter", "nonref"),
+            // v0.6.2 CRITICAL FIX: idle=yes. mpv's default (idle=no) makes an
+            // EMPTY core shut itself down right after initialization — the
+            // classic libmpv trap. Audio attaches happened WITHOUT a file, so
+            // the core died before the first loadfile ever arrived and every
+            // music session was born dead on affected builds.
+            ("idle", "yes"),
             ("osc", "no"),
             ("osd-level", "0"),
             ("input-default-bindings", "no"),
@@ -587,9 +677,42 @@ pub fn mpv_attach(app: AppHandle, hwdec: Option<String>, show: Option<bool>) -> 
             let v = CString::new(v).unwrap();
             (a.set_option_string)(h, n.as_ptr(), v.as_ptr());
         }
-        if (a.initialize)(h) != 0 {
+        if video {
+            for (k, v) in [
+                ("vo", "gpu-next,gpu"),
+                // "auto-safe" refuses hwdec on non-whitelisted drivers → silent
+                // software decode → CPU burn. "auto" still falls back to SW when
+                // genuinely unsupported, but takes the GPU path far more often.
+                ("hwdec", hwdec.as_deref().unwrap_or("auto")),
+                ("hwdec-codecs", "all"),
+                // software-decode fast paths (no-ops when hardware decode engages)
+                ("vd-lavc-fast", "yes"),
+                ("vd-lavc-skiploopfilter", "nonref"),
+            ] {
+                let n = CString::new(k).unwrap();
+                let v = CString::new(v).unwrap();
+                (a.set_option_string)(h, n.as_ptr(), v.as_ptr());
+            }
+        } else {
+            for (k, v) in [
+                // surface-less audio: no video output at all, no album-art window
+                ("vo", "null"),
+                ("audio-display", "no"),
+                ("force-window", "no"),
+            ] {
+                let n = CString::new(k).unwrap();
+                let v = CString::new(v).unwrap();
+                (a.set_option_string)(h, n.as_ptr(), v.as_ptr());
+            }
+        }
+        let code = (a.initialize)(h);
+        if code != 0 {
+            let why = err_str(&a, code);
             (a.terminate_destroy)(h);
-            DestroyWindow(hwnd);
+            if hwnd != 0 {
+                DestroyWindow(hwnd);
+            }
+            st.error = Some(format!("mpv_initialize failed: {why}"));
             return st;
         }
         let n = CString::new("time-pos").unwrap();
@@ -608,7 +731,14 @@ pub fn mpv_attach(app: AppHandle, hwdec: Option<String>, show: Option<bool>) -> 
         let thread = std::thread::spawn(move || pump(hp, app2, stop2));
 
         let mut guard = MPV.lock().unwrap();
-        *guard = Some(Instance { h: SendPtr(h), hwnd, shown: false, stop, joined: Some(thread) });
+        *guard = Some(Instance {
+            h: SendPtr(h),
+            hwnd,
+            shown: false,
+            kind: if video { KIND_VIDEO } else { KIND_AUDIO },
+            stop,
+            joined: Some(thread),
+        });
         drop(guard);
 
         // v0.5.0 CPU fix — now that the surface is genuinely attached:
@@ -617,7 +747,7 @@ pub fn mpv_attach(app: AppHandle, hwdec: Option<String>, show: Option<bool>) -> 
         // full-window blur recomposition every single frame. Restored on
         // mpv_detach. Only for VISIBLE (video) attaches — audio sessions
         // keep the glass; there is no video to fight the material.
-        if show_surface {
+        if video {
             crate::set_playback_effects(&app, true);
         }
     }
@@ -631,15 +761,26 @@ pub fn mpv_detach(app: AppHandle) -> bool {
     // keep the engine running. Only video/idle sessions fully release.
     if is_audio_active() {
         if let Some(hwnd) = with_instance(|i, _| i.hwnd) {
-            unsafe {
-                ShowWindow(hwnd, SW_HIDE);
+            if hwnd != 0 {
+                unsafe {
+                    ShowWindow(hwnd, SW_HIDE);
+                }
             }
         }
         return true;
     }
     // v0.5.0 CPU fix mirror: bring the Mica/Acrylic glass back for the UI
     crate::set_playback_effects(&app, false);
-    detach_impl()
+    let released = detach_impl();
+    if released {
+        // v0.6.2: the JS audio service latches `attached=true` and never saw
+        // a "died" event for command-driven teardowns — after watching video
+        // (Player unmount → full detach) every later mpv_load hit an empty
+        // engine and music stayed broken until restart. Broadcast died so
+        // the latch resets; playInner also self-repairs on load failure.
+        let _ = app.emit("omp://mpv", serde_json::json!({ "kind": "died" }));
+    }
+    released
 }
 
 /// On-demand engine stats for the "Stats for nerds" overlay.
@@ -803,8 +944,10 @@ fn detach_impl() -> bool {
             }
             unsafe { (a.terminate_destroy)(inst.h.0) };
         }
-        unsafe {
-            DestroyWindow(inst.hwnd);
+        if inst.hwnd != 0 {
+            unsafe {
+                DestroyWindow(inst.hwnd);
+            }
         }
         true
     } else {
@@ -826,6 +969,10 @@ pub fn mpv_set_rect(app: AppHandle, x: f64, y: f64, w: f64, h: f64) -> bool {
     let pw = ((w * scale).round() as i32).max(1);
     let ph = ((h * scale).round() as i32).max(1);
     with_instance(|inst, _| {
+        // surface-less audio instance — nothing to position
+        if inst.hwnd == 0 {
+            return false;
+        }
         unsafe {
             SetWindowPos(inst.hwnd, 0, px, py, pw, ph, SWP_NOZORDER | SWP_NOACTIVATE);
             if !inst.shown {
@@ -1042,6 +1189,7 @@ pub(crate) struct ProbeMeta {
 #[cfg(windows)]
 pub(crate) fn probe_media(path: &str, thumb_dir: Option<&Path>, audio: bool) -> Option<ProbeMeta> {
     let a = api()?;
+    let a = a.as_ref(); // &MpvApi — Arc binding stays alive to the end of scope
     let want_thumb = thumb_dir.is_some();
     if want_thumb {
         let _ = std::fs::create_dir_all(thumb_dir.unwrap());
