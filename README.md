@@ -28,6 +28,33 @@ distinctive, not into reinventing video decoding.
   you pick**, ten one-tap presets, themes that travel as `.omptheme` files,
   adjustable transparency, Reduced Effects for low-end PCs.
 
+## What's new in v0.11.0 — the sleep timer and a Home screen that tells the truth
+
+- **Sleep timer — the bedtime feature.** Player → moon button (or the
+  right-click menu → Sleep timer) and Music → the now-playing bar's moon:
+  pause everything after **15 / 30 / 60 minutes** or **after the current
+  track/video**. It pauses — mpv, the web audio element, the Player's video —
+  it does not close the app, and a countdown tooltip shows the time remaining.
+  The "after this one" hold is shared between music and video (whichever ends
+  first consumes it), so it always stops exactly where you are, never mid-
+  advance into the next queue item.
+- **Music shuffle & repeat, one tap away.** Both flags existed in the engine
+  since v0.6 but were only reachable from the desktop widget; the now-playing
+  bar now has proper toggle buttons that light up with the accent.
+- **Home → Your playlists is real now.** The old "Quick playlists" card was a
+  hardcoded fake (Favourites / Focus Mix / Watch Later with invented counts).
+  It lists your actual SQLite playlists with real track counts; click plays
+  the playlist through the native engine, right-click deletes it, and empty
+  state explains how to build one in Music.
+- **Home → Library at a glance is real now.** Instead of static demo numbers
+  it shows the live SQLite counters: your videos, tracks, and folders.
+- **Home → System shows the live engine status.** "WebView2 · Phase 1" was
+  stale since v0.3.0 — it now shows the actual mpv engine version with a
+  green/red health dot, so a quarantined engine is visible on the very first
+  screen instead of only inside Settings.
+- **Home → Recently played.** The last eight things you opened (videos,
+  music, images) as one-click chips with relative timestamps.
+
 ## What's new in v0.10.1 — self-heal, the sticky equalizer, and polish
 
 - **OMP now repairs itself without being asked.** On every boot the app runs

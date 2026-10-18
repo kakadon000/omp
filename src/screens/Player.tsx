@@ -12,9 +12,10 @@ import { videoQueue, type RepeatMode } from "../lib/videoQueue";
 import { robustSeek } from "../lib/media";
 import { engineStore, onMpvEvent, attachEngine, detachEngine, parseTracks } from "../lib/engine";
 import { audioStore, stopSession, type AudioState } from "../lib/audio";
+import { sleepTimer } from "../lib/sleep";
 import type { VideoItem } from "../lib/data";
 
-type MenuKind = "speed" | "subs" | "audio" | null;
+type MenuKind = "speed" | "subs" | "audio" | "sleep" | null;
 type Aspect = "fit" | "fill" | "stretch" | "16:9" | "4:3";
 
 const ASPECTS: { id: Aspect; label: string }[] = [
@@ -81,6 +82,7 @@ export function Player({ settings }: { settings: Settings }) {
   const [jumpOpen, setJumpOpen] = useState(false);
   const [takeover, setTakeover] = useState(0);
   const [queueOpen, setQueueOpen] = useState(true);
+  const sleep = useSyncExternalStore(sleepTimer.sub, sleepTimer.get);
   const [osd, setOsd] = useState<{ id: number; msg: string } | null>(null);
   const [tracks, setTracks] = useState<{ id: number; type: string; title?: string; lang?: string; codec?: string; default?: boolean }[]>([]);
   const [dims, setDims] = useState<{ w: number; h: number } | null>(null);
@@ -239,6 +241,8 @@ export function Player({ settings }: { settings: Settings }) {
             if (custom.path) void libNote(custom.path, 0, dur || 0);
             break;
           }
+          // sleep timer "stop after this video" — hold instead of advancing
+          if (sleepTimer.consumeEndHold()) { setPlaying(false); break; }
           if (queue.repeat === "one") {
             void invoke("mpv_seek", { t: 0 });
             void invoke("mpv_set_paused", { v: false });
@@ -266,6 +270,17 @@ export function Player({ settings }: { settings: Settings }) {
     document.documentElement.classList.toggle("mpv-live", isMpv && !audioState.track);
     return () => document.documentElement.classList.remove("mpv-live");
   }, [isMpv, audioState.track]);
+
+  // sleep timer fired — pause the WEB <video> (mpv is paused by the audio
+  // service listener; on the web engine each element owns its own pause)
+  useEffect(() => {
+    const onSleepFire = () => {
+      const v = videoRef.current;
+      if (v && !v.paused) v.pause();
+    };
+    window.addEventListener("omp:sleep-fire", onSleepFire);
+    return () => window.removeEventListener("omp:sleep-fire", onSleepFire);
+  }, []);
 
   // Stats for nerds — demand-driven: the 1s engine probe runs ONLY while the
   // overlay is open (spec: "no unnecessary timers"); closed = zero cost.
@@ -904,6 +919,16 @@ export function Player({ settings }: { settings: Settings }) {
       { label: abLabel, icon: "repeat", hint: "B", onClick: abLoop },
       { label: `Loop: ${queue.repeat === "off" ? "Off" : queue.repeat === "all" ? "All" : "One"}`, icon: "repeat", hint: "Shift+L", onClick: () => { const m = videoQueue.cycleRepeat(); showOsd(m === "off" ? "Loop off" : m === "all" ? "Loop all" : "Loop one"); } },
       { label: `Shuffle: ${queue.shuffle ? "On" : "Off"}`, icon: "shuffle", hint: "R", onClick: () => { const on = videoQueue.toggleShuffle(); showOsd(on ? "Shuffle on" : "Shuffle off"); } },
+      {
+        label: `Sleep timer: ${sleepTimer.label()}`, icon: "moon",
+        sub: [
+          { label: "Off", onClick: () => { sleepTimer.disarm(); showOsd("Sleep timer off"); } },
+          { label: "15 minutes", onClick: () => { sleepTimer.arm(15); showOsd("Sleep in 15 min"); } },
+          { label: "30 minutes", onClick: () => { sleepTimer.arm(30); showOsd("Sleep in 30 min"); } },
+          { label: "60 minutes", onClick: () => { sleepTimer.arm(60); showOsd("Sleep in 60 min"); } },
+          { label: "After this video", onClick: () => { sleepTimer.armEndOfTrack(); showOsd("Stopping after this video"); } },
+        ],
+      },
       { sep: true },
       { label: "Take snapshot", icon: "image", hint: "T", onClick: snapshot },
       { label: "Picture-in-picture", icon: "pip", onClick: () => void togglePip(), disabled: isMpv },
@@ -1010,6 +1035,8 @@ export function Player({ settings }: { settings: Settings }) {
                 if (custom.path) void libNote(custom.path, 0, dur || 0);
                 return;
               }
+              // sleep timer "stop after this video" — hold instead of advancing
+              if (sleepTimer.consumeEndHold()) { setPlaying(false); return; }
               if (queue.repeat === "one") {
                 const v = videoRef.current;
                 if (v) { void robustSeek(v, 0, src); void v.play(); }
@@ -1070,6 +1097,7 @@ export function Player({ settings }: { settings: Settings }) {
               <div>Buffered&nbsp;&nbsp;&nbsp;{isMpv ? "native demuxer" : `${Math.round(bufferedPct)}%`}</div>
               {quality && <div>Frames&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{quality.totalVideoFrames} decoded · {quality.droppedVideoFrames} dropped</div>}
               <div>Loop&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{loopA !== null ? `A-B (${fmtTime(loopA)}–${fmtTime(loopB ?? dur)})` : queue.repeat}</div>
+              {sleep.mode !== "off" && <div>Sleep&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;{sleepTimer.label()}</div>}
               <div className="stats-src">{loadSrc}</div>
             </div>
           )}
@@ -1284,6 +1312,36 @@ export function Player({ settings }: { settings: Settings }) {
                     {r === rate && <Icon name="check" size={14} />}
                   </button>
                 ))}
+              </div>
+            )}
+          </div>
+
+          {/* sleep timer menu */}
+          <div className="menu-wrap">
+            <button
+              className={`icon-btn tip ${sleep.mode !== "off" ? "on" : ""}`}
+              data-tip={sleep.mode !== "off" ? `Sleep: ${sleepTimer.label()}` : "Sleep timer"} data-tip-up
+              onClick={() => setMenu(menu === "sleep" ? null : "sleep")}
+              aria-label="Sleep timer"
+            >
+              <Icon name="moon" />
+            </button>
+            {menu === "sleep" && (
+              <div className="menu up" onMouseLeave={() => setMenu(null)}>
+                {[
+                  { id: "off", label: "Off", run: () => sleepTimer.disarm() },
+                  { id: "15", label: "15 minutes", run: () => sleepTimer.arm(15) },
+                  { id: "30", label: "30 minutes", run: () => sleepTimer.arm(30) },
+                  { id: "60", label: "60 minutes", run: () => sleepTimer.arm(60) },
+                  { id: "end", label: "After this video", run: () => sleepTimer.armEndOfTrack() },
+                ].map((o) => {
+                  const sel = o.id === "off" ? sleep.mode === "off" : o.id === "end" ? sleep.mode === "end" : sleep.mode === "minutes" && Math.abs(sleep.remainingMs / 60_000 - Number(o.id)) < 0.5;
+                  return (
+                    <button key={o.id} className={`menu-item ${sel ? "sel" : ""}`} onClick={() => { o.run(); setMenu(null); }}>
+                      <span className="grow">{o.label}</span>{sel && <Icon name="check" size={14} />}
+                    </button>
+                  );
+                })}
               </div>
             )}
           </div>

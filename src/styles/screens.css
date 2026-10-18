@@ -875,3 +875,20 @@ html.reduced .w-vis i { animation: none; height: 9px; }
   display: block; height: 100%; border-radius: 99px;
   background: var(--accent); transition: width .35s ease;
 }
+
+/* ---------------- v0.11.0: home dashboard + sleep timer ---------------- */
+
+/* recently-played chips on Home */
+.hist-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.hist-chip {
+  display: inline-flex; align-items: center; gap: 8px;
+  max-width: 260px; padding: 7px 11px;
+  font-size: 12px; color: var(--text);
+  text-align: left;
+}
+.hist-chip img, .hist-chip svg { width: 16px; height: 16px; flex: none; border-radius: 4px; object-fit: cover; color: var(--accent); }
+.hist-name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.hist-when { font-size: 10.5px; color: var(--text-3); flex: none; font-variant-numeric: tabular-nums; }
+
+/* sleep-timer popover in the now-playing bar — narrower than the default menu */
+.np-sleep { min-width: 168px; left: auto; right: 0; }

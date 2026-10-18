@@ -15,6 +15,7 @@ import {
   setShuffle, setRepeat, trackArt, libItemToTrack, loadStations, addStation,
   removeStation, stationToTrack, type AudioTrack, type Station,
 } from "../lib/audio";
+import { sleepTimer } from "../lib/sleep";
 import { fmtTime, pct } from "../lib/format";
 import { navigate } from "../lib/router";
 
@@ -385,6 +386,8 @@ export function NowPlayingBar() {
   const st = audioUse();
   const current = st.track;
   const [scrub, setScrub] = useState<number | null>(null);
+  const [sleepOpen, setSleepOpen] = useState(false);
+  const sleep = useSyncExternalStore(sleepTimer.sub, sleepTimer.get);
   if (!current) return null;
 
   const dur = st.live ? 0 : st.dur || current.duration || 0;
@@ -430,11 +433,53 @@ export function NowPlayingBar() {
         {st.live ? (st.playing ? "ON AIR" : "PAUSED") : fmtTime(st.time)}
       </span>
       <div style={{ display: "flex", alignItems: "center", gap: 2, flex: "none" }}>
+        <button
+          className={`icon-btn sm ${st.shuffle ? "on" : ""}`}
+          onClick={() => setShuffle(!st.shuffle)}
+          title={st.shuffle ? "Shuffle on" : "Shuffle off"} aria-label="Shuffle"
+        >
+          <Icon name="shuffle" size={14} />
+        </button>
+        <button
+          className={`icon-btn sm ${st.repeat ? "on" : ""}`}
+          onClick={() => setRepeat(!st.repeat)}
+          title={st.repeat ? "Repeat: one" : "Repeat: off"} aria-label="Repeat"
+        >
+          <Icon name="repeat" size={14} />
+        </button>
         <button className="icon-btn sm" onClick={() => next(-1)} disabled={st.queue.length < 2} aria-label="Previous track"><Icon name="prev" size={15} /></button>
         <button className="icon-btn" onClick={() => void toggle()} aria-label={st.playing ? "Pause" : "Play"}>
           <Icon name={st.playing ? "pause" : "play"} size={19} />
         </button>
         <button className="icon-btn sm" onClick={() => next(1)} disabled={st.queue.length < 2} aria-label="Next track"><Icon name="next" size={15} /></button>
+        <div className="menu-wrap">
+          <button
+            className={`icon-btn sm ${sleep.mode !== "off" ? "on" : ""}`}
+            onClick={(e) => { e.currentTarget.focus(); setSleepOpen((o) => !o); }}
+            title={sleep.mode !== "off" ? `Sleep: ${sleepTimer.label()}` : "Sleep timer"}
+            aria-label="Sleep timer"
+          >
+            <Icon name="moon" size={14} />
+          </button>
+          {sleepOpen && (
+            <div className="menu up np-sleep" onMouseLeave={() => setSleepOpen(false)}>
+              {[
+                { id: "off", label: "Off", run: () => sleepTimer.disarm() },
+                { id: "15", label: "15 minutes", run: () => sleepTimer.arm(15) },
+                { id: "30", label: "30 minutes", run: () => sleepTimer.arm(30) },
+                { id: "60", label: "60 minutes", run: () => sleepTimer.arm(60) },
+                { id: "end", label: "After this track", run: () => sleepTimer.armEndOfTrack() },
+              ].map((o) => {
+                const sel = o.id === "off" ? sleep.mode === "off" : o.id === "end" ? sleep.mode === "end" : sleep.mode === "minutes" && Math.abs(sleep.remainingMs / 60_000 - Number(o.id)) < 0.5;
+                return (
+                  <button key={o.id} className={`menu-item ${sel ? "sel" : ""}`} onClick={() => { o.run(); setSleepOpen(false); }}>
+                    <span className="grow">{o.label}</span>{sel && <Icon name="check" size={14} />}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
         <button className="icon-btn sm" onClick={() => void invoke("widget_toggle")} title="Show desktop widget" aria-label="Show widget"><Icon name="layers" size={14} /></button>
       </div>
     </div>

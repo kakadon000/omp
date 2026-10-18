@@ -17,6 +17,7 @@ import { invoke, isTauri, tauriEmit, tauriListen } from "./tauri";
 import { loadSettings } from "./store";
 import { toast } from "../components/Toast";
 import { onMpvEvent } from "./engine";
+import { sleepTimer } from "./sleep";
 
 export type AudioTrack = {
   id: string; // stable id: file path or station url
@@ -366,6 +367,19 @@ export function setRepeat(v: boolean) {
   audioStore.set({ repeat: v });
 }
 
+/** Pause-only control (the sleep timer fires this; toggle() flips state). */
+export async function pausePlayback() {
+  const st = audioStore.get();
+  if (!st.track) return;
+  if (isTauri && attached) {
+    try { await invoke("mpv_set_paused", { v: true }); } catch { /* engine went away */ }
+    audioStore.set({ playing: false });
+  } else if (el) {
+    el.pause();
+    audioStore.set({ playing: false });
+  }
+}
+
 /** React hook — subscribes a component to the audio session state. */
 export function audioUse(): AudioState {
   return useSyncExternalStore(audioStore.sub, audioStore.get);
@@ -443,6 +457,11 @@ function onEnded() {
     }
     return;
   }
+  // sleep timer "stop after this track" — hold here instead of advancing
+  if (sleepTimer.consumeEndHold()) {
+    audioStore.set({ playing: false });
+    return;
+  }
   if (st.repeat && st.qIndex >= 0) {
     seek(0);
     if (!st.playing) void toggle();
@@ -468,6 +487,18 @@ let consecutiveErrors = 0;
 let skipTimer: number | null = null;
 // radio auto-reconnect throttle (max one per 30s per drop)
 let lastRadioReconnect = 0;
+
+// sleep timer fired — pause everything this service owns. The native engine
+// pause is NOT gated on audio state: mpv may currently be playing a video in
+// the Player (the audio service has no track then, but the pause must land).
+window.addEventListener("omp:sleep-fire", () => {
+  if (isTauri && attached) void invoke("mpv_set_paused", { v: true }).catch(() => {});
+  const st = audioStore.get();
+  if (st.track) {
+    if (el) el.pause();
+    audioStore.set({ playing: false });
+  }
+});
 
 if (isTauri) {
   onMpvEvent((e: MpvEvt) => {
