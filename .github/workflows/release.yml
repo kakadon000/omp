@@ -38,12 +38,30 @@ jobs:
           # 1) bundle the demo videos next to the exe so mpv can open them by path
           Copy-Item public/media/*.mp4 src-tauri/resources/media/
           # 2) download the libmpv dev build (GPL — full codec set: MKV/HEVC/AVI/WMV/FLV...)
-          $headers = @{ "User-Agent" = "omp-ci-build" }
-          $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/zhongfly/mpv-winbuild/releases/latest" -Headers $headers
+          # GITHUB_TOKEN auth: the shared runner IP hits the anonymous 60/hr
+          # API limit far too often — authenticated calls get 1000/hr.
+          $headers = @{
+            "User-Agent"    = "omp-ci-build"
+            "Accept"        = "application/vnd.github+json"
+            "Authorization" = "Bearer $env:GITHUB_TOKEN"
+          }
+          $rel = $null
+          for ($i = 1; $i -le 5; $i++) {
+            try {
+              $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/zhongfly/mpv-winbuild/releases/latest" -Headers $headers
+              break
+            } catch {
+              Write-Host "API attempt $i failed: $($_.Exception.Message)"
+              if ($i -eq 5) { throw }
+              Start-Sleep -Seconds (20 * $i)
+            }
+          }
           $asset = $rel.assets | Where-Object { $_.name -like "mpv-dev-x86_64-*.7z" -and $_.name -notlike "*v3*" } | Select-Object -First 1
           if (-not $asset) { throw "no mpv-dev asset found in latest release" }
           Write-Host "Downloading $($asset.name)"
-          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile mpv-dev.7z -Headers $headers
+          # NO auth header here: the download redirects to the release CDN and
+          # forwarding the bearer token breaks the signed request
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile mpv-dev.7z -Headers @{ "User-Agent" = "omp-ci-build" }
           7z x mpv-dev.7z -ompvdev | Out-Null
           # zhongfly builds ship the engine as libmpv-2.dll (flat archive)
           $dll = Get-ChildItem -Recurse -Filter *.dll mpvdev | Select-Object -First 1
