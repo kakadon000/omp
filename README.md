@@ -28,6 +28,36 @@ distinctive, not into reinventing video decoding.
   you pick**, ten one-tap presets, themes that travel as `.omptheme` files,
   adjustable transparency, Reduced Effects for low-end PCs.
 
+## What's new in v0.12.0 — Home, redesigned
+
+- **Hero 2.0.** The welcome banner grew into a real dashboard header: an
+  ambient single-accent glow that follows whatever accent you picked in the
+  Theme Studio, the real date next to the tagline, a version chip, and five
+  one-tap actions (Open media, Resume, Music, Online, Editor). The engine
+  status moved up here too — a green/red pill in the top-right corner shows
+  "Engine ready" or "Engine needs repair" with the mpv version, and one click
+  lands you in Settings → Engine & tools.
+- **Quick-launch tiles.** Six live tiles under the hero: Videos, Music,
+  Gallery, Online, Editor and Widget — each with an accent icon chip and a
+  live subtitle (real database counts for Videos and Music once the library
+  has scanned, format hints for the rest).
+- **Recently played, upgraded.** The tiny text chips became poster tiles with
+  thumbnails, names and relative timestamps, and each tile has a right-click
+  menu: open it, or remove it from history. The section header now has a
+  Clear button that wipes the whole history in one go.
+- **Continue watching, upgraded.** Cards now show a "x% left" pill on the
+  thumbnail, an accent progress bar, a gentle hover lift and a subtle poster
+  zoom — the section header shows how many are waiting.
+- **Library at a glance, upgraded.** Stat cards got accent icon chips so
+  Videos / Tracks / Folders read at a glance instead of floating numbers.
+- **Playlists, upgraded.** Each row now carries an accent playlist chip and
+  reveals a play bubble on hover; the section header shows the playlist count.
+- **System card, upgraded.** Icon rows for Version / Engine / License, the
+  health dot, and a full-width "Engine & tools" button straight into Settings.
+- **Motion with manners.** The screen fades up in two gentle stages on entry —
+  and both Reduced Effects mode and Windows' prefers-reduced-motion turn it
+  off completely, as with every animation in OMP.
+
 ## What's new in v0.11.0 — the sleep timer and a Home screen that tells the truth
 
 - **Sleep timer — the bedtime feature.** Player → moon button (or the

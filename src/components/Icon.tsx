@@ -89,7 +89,7 @@ const P: Record<string, React.ReactNode> = {
 
 export type IconName = keyof typeof P;
 
-export function Icon({ name, size = 18, style }: { name: string; size?: number; style?: CSSProperties }) {
+export function Icon({ name, size = 18, style, className }: { name: string; size?: number; style?: CSSProperties; className?: string }) {
   return (
     <svg
       width={size}
@@ -101,6 +101,7 @@ export function Icon({ name, size = 18, style }: { name: string; size?: number; 
       strokeLinecap="round"
       strokeLinejoin="round"
       style={style}
+      className={className}
       aria-hidden="true"
     >
       {P[name] ?? P.info}
