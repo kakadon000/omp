@@ -24,8 +24,38 @@ distinctive, not into reinventing video decoding.
   player that works with the main window closed.
 - **Online media** — dedicated YouTube experience, authorized IPTV and radio.
   No OMP-inserted ads, ever.
-- **Theme Studio** — dark/light/system, five tasteful accents, adjustable
-  transparency, Reduced Effects for low-end PCs.
+- **Theme Studio** — dark/light/system, five tasteful accents **or any color
+  you pick**, ten one-tap presets, themes that travel as `.omptheme` files,
+  adjustable transparency, Reduced Effects for low-end PCs.
+
+## What's new in v0.10.0 — the Theme Studio: any color, ten presets, themes as files
+
+- **Custom accent — any color you want.** The five built-in accents are joined
+  by a color picker and a hex field. Pick any color and OMP derives the whole
+  palette from it live — the accent shade, the pressed/darker variant, the
+  readable label text on top of it, and the translucent tint — for both dark
+  and light mode (very dark picks are automatically lifted so they stay
+  visible on glass; very bright picks are darkened in light mode for contrast).
+  The derived shades update across the entire app instantly.
+- **Ten presets, one tap.** The Theme Studio opens with a preset gallery:
+  Fluent Dark, Fluent Light, Ocean, Sunset, Rose, Forest, Cyberpunk, Nord,
+  Gold and Paper — each with its own accent, blur strength and effects level.
+  Custom-color presets double as a showcase of the new color engine.
+- **Themes travel as files: `.omptheme`.** Export your current theme (theme,
+  accent, custom color, transparency, effects) to a small JSON file from the
+  Theme Studio, and double-click any `.omptheme` file in Explorer to apply it
+  instantly — OMP registers the association, validates the payload (type,
+  version, color format, clamped values) and applies it in one click. Share
+  your setup with friends; nothing touches your media library.
+- **In-app update check (Settings → About).** One button hits the GitHub
+  Releases API from the Rust shell (async — never blocks the UI) and compares
+  the latest tag with your version: "You're on the latest version" or "OMP
+  vX.Y is out" with a direct link to the download page. No telemetry, just a
+  public API call you could make yourself.
+- **Under the hood:** `theme.ts` color engine (relative-luminance contrast
+  math), custom-accent variables applied as inline overrides over the palette
+  stylesheet, `export_theme_file` + `check_update` Rust commands, and the
+  `.omptheme` file type added to the open-with/single-instance pipeline.
 
 ## What's new in v0.9.1 — self-repair, the in-built YouTube API, and tabs
 

@@ -1245,7 +1245,7 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
 name = "hashlink"
-version = "0.9.1"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6ba4ff7128dee98c7dc9794b6a411377e1404dba1c97deb8d1a55297bd25d8af"
 dependencies = [
@@ -2184,7 +2184,7 @@ dependencies = [
 
 [[package]]
 name = "omp"
-version = "0.9.1"
+version = "0.10.0"
 dependencies = [
  "rusqlite",
  "serde",

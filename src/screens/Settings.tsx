@@ -90,6 +90,25 @@ export function Settings({ settings, update }: { settings: SettingsShape; update
     return () => window.removeEventListener("omp://channels-changed", fn as EventListener);
   }, []);
   const [retesting, setRetesting] = useState(false);
+  // v0.10.0 — in-app update check (GitHub releases API, async Rust command)
+  const [upInfo, setUpInfo] = useState<{ latest: string; url: string; newer: boolean } | null>(null);
+  const [checking, setChecking] = useState(false);
+  const checkUpdates = async () => {
+    if (!isTauri) { toast("Update checks run in the desktop app", "info"); return; }
+    setChecking(true);
+    try {
+      const info = await invoke<{ latest: string; url: string; newer: boolean } | null>("check_update", { current: APP_VERSION });
+      setUpInfo(info);
+      if (!info) toast("Couldn't reach GitHub — check your connection", "err");
+      else if (!info.newer) toast(`You're on the latest version (v${APP_VERSION})`, "ok");
+      else toast(`OMP v${info.latest} is available — grab it from the Releases page!`, "ok");
+    } catch {
+      setUpInfo(null);
+      toast("Update check failed", "err");
+    } finally {
+      setChecking(false);
+    }
+  };
   // v0.9.1 — Engine & tools: exact per-component health + one-click repair
   const [health, setHealth] = useState<OmpHealth | null>(null);
   const [repair, setRepair] = useState<RepairEvt | null>(null);
@@ -607,6 +626,29 @@ export function Settings({ settings, update }: { settings: SettingsShape; update
             <span className="badge">Windows 10 · 11</span>
             <span className="badge">{isTauri ? "Desktop" : "Web demo"}</span>
           </div>
+        </div>
+      </div>
+      <div className="card">
+        <div className="row">
+          <div className="row-main">
+            <div className="row-title">Updates</div>
+            <div className="row-desc">
+              {upInfo
+                ? upInfo.newer
+                  ? `OMP v${upInfo.latest} is out — you're on v${APP_VERSION}`
+                  : `Latest release confirmed — you're on v${APP_VERSION}`
+                : `Running v${APP_VERSION} · checks the GitHub Releases page for a newer build`}
+            </div>
+          </div>
+          {upInfo && upInfo.newer ? (
+            <button className="btn sm" onClick={() => void invoke<boolean>("open_url", { url: upInfo.url }).then((ok) => { if (!ok) toast("Couldn't open the browser", "err"); })}>
+              <Icon name="download" size={14} /> Get v{upInfo.latest}
+            </button>
+          ) : (
+            <button className="btn sm" disabled={checking} onClick={() => void checkUpdates()}>
+              <Icon name="rotate" size={14} /> {checking ? "Checking…" : "Check for updates"}
+            </button>
+          )}
         </div>
       </div>
       {isTauri && diag && (

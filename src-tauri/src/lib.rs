@@ -26,6 +26,7 @@ fn is_media_ext(path: &str) -> bool {
             | "mp3" | "flac" | "m4a" | "wav" | "ogg" | "oga" | "opus" | "aac" | "wma"
             | "jpg" | "jpeg" | "png" | "webp" | "bmp" | "gif" | "avif" | "tif" | "tiff"
             | "m3u" | "m3u8"
+            | "omptheme"
     )
 }
 
@@ -344,10 +345,74 @@ fn online_read_file(path: String) -> Option<String> {
         .next()
         .map(|e| e.to_ascii_lowercase())
         .unwrap_or_default();
-    if !matches!(ext.as_str(), "m3u" | "m3u8" | "txt") {
+    if !matches!(ext.as_str(), "m3u" | "m3u8" | "txt" | "omptheme") {
         return None;
     }
     std::fs::read_to_string(&path).ok()
+}
+
+/// Phase 6 — persist an .omptheme file (Theme Studio export). Extension-gated
+/// like the other file IO: we only ever write theme files from the UI.
+#[tauri::command]
+fn export_theme_file(path: String, contents: String) -> bool {
+    let ext = path
+        .rsplit('.')
+        .next()
+        .map(|e| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    if ext != "omptheme" {
+        return false;
+    }
+    std::fs::write(&path, contents).is_ok()
+}
+
+/// Phase 6 — "Check for updates": fetch the latest GitHub release tag and
+/// compare it with the running version. Async so the network round-trip never
+/// blocks the UI (sync commands run on the main thread — v0.6.1 rule).
+#[derive(serde::Serialize)]
+struct UpdateInfo {
+    latest: String,
+    url: String,
+    newer: bool,
+}
+
+/// "v0.10.0-rc1" → [0, 10, 0]; tolerates build suffixes and junk parts.
+fn parse_ver(v: &str) -> Vec<u32> {
+    v.trim()
+        .trim_start_matches('v')
+        .trim_start_matches('V')
+        .split(['-', '+'])
+        .next()
+        .unwrap_or("")
+        .split('.')
+        .map(|p| p.trim().parse::<u32>().unwrap_or(0))
+        .collect()
+}
+
+#[tauri::command]
+async fn check_update(current: String) -> Option<UpdateInfo> {
+    let resp = ureq::get("https://api.github.com/repos/kakadon000/omp/releases/latest")
+        .set("User-Agent", "omp-app")
+        .set("Accept", "application/vnd.github+json")
+        .timeout(std::time::Duration::from_secs(12))
+        .call()
+        .ok()?;
+    let data: serde_json::Value = resp.into_json().ok()?;
+    let tag = data.get("tag_name")?.as_str()?.trim().to_string();
+    let url = data
+        .get("html_url")
+        .and_then(|v| v.as_str())
+        .unwrap_or("https://github.com/kakadon000/omp/releases")
+        .to_string();
+    if tag.is_empty() {
+        return None;
+    }
+    let cur = parse_ver(&current);
+    let lat = parse_ver(&tag);
+    // Vec<u32> compare handles 0.9.1 < 0.10.0 and 0.9 < 0.9.1 correctly.
+    let newer = lat > cur;
+    let latest = tag.trim_start_matches(['v', 'V']).to_string();
+    Some(UpdateInfo { latest, url, newer })
 }
 
 /// Open an https URL in the system browser (YouTube Music, playlist exports,
@@ -748,6 +813,8 @@ pub fn run() {
             open_default_apps,
             online_read_file,
             open_url,
+            export_theme_file,
+            check_update,
             online_ytdlp_status,
             online_yt_search,
             online_innertube_search,

@@ -506,6 +506,45 @@ html.mpv-live .ed-canvas-wrap { background: transparent; }
 html.reduced .w-vis i { animation: none; height: 9px; }
 
 /* ---------------- themes studio ---------------- */
+.preset-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(152px, 1fr)); gap: 10px;
+}
+.preset-card {
+  display: flex; flex-direction: column; padding: 0; text-align: left;
+  border: 1.5px solid var(--stroke); border-radius: 12px; overflow: hidden;
+  background: var(--surface); cursor: pointer;
+  transition: border-color 0.15s, transform 0.15s, box-shadow 0.15s;
+}
+.preset-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.preset-card.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.preset-swatch { display: block; height: 58px; position: relative; }
+.preset-chip {
+  position: absolute; left: 9px; bottom: 9px; width: 26px; height: 13px; border-radius: 99px;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.45);
+}
+.preset-check {
+  position: absolute; top: 7px; right: 7px; width: 20px; height: 20px; border-radius: 99px;
+  background: var(--accent); color: var(--accent-text);
+  display: flex; align-items: center; justify-content: center;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.4);
+}
+.preset-body { display: flex; flex-direction: column; gap: 1px; padding: 8px 10px 9px; }
+.preset-name { font-size: 12.5px; font-weight: 600; }
+.preset-desc { font-size: 11px; color: var(--text-3); }
+.color-pick-row { display: flex; align-items: center; gap: 10px; }
+.color-pick-row input[type="color"] {
+  width: 42px; height: 32px; padding: 2px; border: 1px solid var(--stroke);
+  border-radius: 8px; background: var(--surface-2); cursor: pointer;
+}
+.hex-input {
+  width: 92px; height: 30px; padding: 0 9px; font-size: 12.5px; font-family: var(--mono);
+  color: var(--text); background: var(--surface-2); border: 1px solid var(--stroke);
+  border-radius: 8px; outline: none;
+}
+.hex-input:focus { border-color: var(--accent); }
+.color-derived { display: flex; align-items: center; gap: 6px; margin-top: 9px; }
+.color-derived span { width: 22px; height: 22px; border-radius: 6px; flex: none; }
+.color-derived em { font-style: normal; font-size: 10.5px; color: var(--text-3); margin-left: 2px; }
 .swatch-accent {
   display: flex; align-items: center; gap: 12px; padding: 12px 14px;
   border-radius: var(--radius); cursor: pointer;

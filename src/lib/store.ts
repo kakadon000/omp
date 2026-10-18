@@ -2,12 +2,13 @@
 // Persisted in localStorage; documented swap point for SQLite in Phase 2.
 
 export type Theme = "dark" | "light" | "system";
-export type Accent = "blue" | "teal" | "violet" | "amber" | "graphite";
+export type Accent = "blue" | "teal" | "violet" | "amber" | "graphite" | "custom";
 export type EffectsMode = "auto" | "full" | "reduced";
 
 export type Settings = {
   theme: Theme;
   accent: Accent;
+  customAccent: string | null; // hex — the accent source when accent === "custom"
   transparency: number; // 0..1 — glass blur strength
   effects: EffectsMode;
   hwAccel: boolean;
@@ -22,6 +23,7 @@ export type Settings = {
 const DEFAULTS: Settings = {
   theme: "dark",
   accent: "blue",
+  customAccent: null,
   transparency: 0.78,
   effects: "auto",
   hwAccel: true,
@@ -55,6 +57,20 @@ export function applySettings(s: Settings) {
     t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
   root.dataset.theme = t;
   root.dataset.accent = s.accent;
+  // Phase 6 — custom accent: derive the four accent vars in JS and set them
+  // inline (inline style wins over the [data-accent] stylesheet rules). For
+  // named accents the inline properties are REMOVED so the palette wins again.
+  for (const p of ["--accent", "--accent-strong", "--accent-text", "--accent-dim"])
+    root.style.removeProperty(p);
+  if (s.accent === "custom" && s.customAccent) {
+    const d = deriveAccent(s.customAccent, t === "light" ? "light" : "dark");
+    if (d) {
+      root.style.setProperty("--accent", d.accent);
+      root.style.setProperty("--accent-strong", d.strong);
+      root.style.setProperty("--accent-text", d.text);
+      root.style.setProperty("--accent-dim", d.dim);
+    }
+  }
   root.style.setProperty("--glass-blur", `${Math.round(s.transparency * 36)}px`);
   const reduced =
     s.effects === "reduced" ||
@@ -182,6 +198,7 @@ if (audio) {
 
 /* ------------------------- external file (open with…) ------------------------- */
 import { ensureSeekable } from "./media";
+import { deriveAccent } from "./theme";
 
 export type CustomMedia = {
   name: string;

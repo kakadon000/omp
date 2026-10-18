@@ -16,6 +16,7 @@ import { fileSrc } from "./lib/library";
 import { playTracks, type AudioTrack } from "./lib/audio";
 import { openProjectPath } from "./lib/editor";
 import { parseM3U, importChannels } from "./lib/online";
+import { parseOmpTheme } from "./lib/theme";
 import { Home } from "./screens/Home";
 import { Player } from "./screens/Player";
 import { Music, NowPlayingBar } from "./screens/Music";
@@ -126,6 +127,15 @@ export default function App() {
           const { added, total } = importChannels(parsed, name);
           toast(`Imported ${added} new channel${added === 1 ? "" : "s"} (${total} total)`, "ok");
           navigate("online");
+        });
+      } else if (ext === "omptheme") {
+        // Phase 6: double-clicked theme file → validate + apply instantly
+        void invoke<string | null>("online_read_file", { path: p }).then((text) => {
+          const parsed = text ? parseOmpTheme(text) : null;
+          if (!parsed) { toast("Not a valid OMP theme file", "err"); return; }
+          update(parsed.patch);
+          toast(`Theme "${parsed.name}" applied`, "ok");
+          navigate("themes");
         });
       } else if (AUDIO.has(ext)) {
         const t: AudioTrack = {
