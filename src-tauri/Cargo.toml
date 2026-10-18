@@ -28,7 +28,7 @@ walkdir = "2"
 # ureq (rustls) downloads official binaries into a writable dir when the
 # bundled copies were removed by antivirus, sevenz-rust extracts the engine
 # DLL from the official mpv-dev archive, and both need no system tooling.
-ureq = "2"
+ureq = { version = "2", features = ["json"] }
 sevenz-rust = "0.6"
 
 [profile.release]

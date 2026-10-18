@@ -257,7 +257,7 @@ fn download_to(
             Ok(n) => {
                 std::io::Write::write_all(&mut file, &buf[..n])
                     .map_err(|e| format!("disk write failed: {e}"))?;
-                received += n;
+                received += n as u64;
                 if received - last_emit > 1_500_000 {
                     last_emit = received;
                     emit(
