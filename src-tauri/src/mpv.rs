@@ -698,35 +698,44 @@ pub struct EngineDiag {
 pub fn mpv_diag() -> EngineDiag {
     #[cfg(windows)]
     unsafe {
+        // nested fn (not a closure): closures keep their captures borrowed
+        // until end of scope, which clashed with reading the results below.
+        unsafe fn try_load(
+            path: &str,
+            probed: &mut String,
+            loaded: &mut Option<String>,
+            last_err: &mut u32,
+        ) -> bool {
+            *probed = path.to_string();
+            let wide = to_wide(path);
+            let h = LoadLibraryW(wide.as_ptr());
+            if h != 0 {
+                *loaded = Some(path.to_string());
+                FreeLibrary(h);
+                true
+            } else {
+                // std's last_os_error is the reliable GetLastError read
+                *last_err = std::io::Error::last_os_error()
+                    .raw_os_error()
+                    .unwrap_or(0) as u32;
+                false
+            }
+        }
+
         let mut last_err: u32 = 0;
         let mut probed = String::new();
         let mut loaded: Option<String> = None;
 
         // re-probe every candidate WITHOUT caching, purely for diagnostics
-        let mut try_load = |path: &str| -> bool {
-            probed = path.to_string();
-            let wide = to_wide(path);
-            let h = LoadLibraryW(wide.as_ptr());
-            if h != 0 {
-                loaded = Some(path.to_string());
-                FreeLibrary(h);
-                true
-            } else {
-                // std's last_os_error is the reliable GetLastError read
-                last_err = std::io::Error::last_os_error()
-                    .raw_os_error()
-                    .unwrap_or(0) as u32;
-                false
-            }
-        };
-
-        try_load("mpv-2.dll");
+        try_load("mpv-2.dll", &mut probed, &mut loaded, &mut last_err);
         if loaded.is_none() {
             if let Ok(exe) = std::env::current_exe() {
                 if let Some(dir) = exe.parent() {
                     for rel in ["mpv-2.dll", "resources\\mpv-2.dll", "..\\mpv-2.dll"] {
                         let p = dir.join(rel);
-                        if p.exists() && try_load(&p.to_string_lossy()) {
+                        if p.exists()
+                            && try_load(&p.to_string_lossy(), &mut probed, &mut loaded, &mut last_err)
+                        {
                             break;
                         }
                     }

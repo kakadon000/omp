@@ -48,12 +48,6 @@ const AUDIO_EXT: &[&str] = &[
 const IMAGE_EXT: &[&str] = &[
     "jpg", "jpeg", "png", "webp", "bmp", "gif", "avif", "tif", "tiff", "jfif", "ico",
 ];
-/// v0.6.1 — the Gallery now reads REAL scanned images. Images are indexed
-/// with the original path as their own preview (no probe needed), so every
-/// photo in a scanned folder shows up with a live thumbnail.
-const IMAGE_EXT: &[&str] = &[
-    "jpg", "jpeg", "png", "webp", "bmp", "gif", "avif", "tif", "tiff", "jfif", "ico",
-];
 const SKIP_DIRS: &[&str] = &[
     "$RECYCLE.BIN", "System Volume Information", "node_modules",
     ".git", "Windows", "Program Files", "Program Files (x86)",
