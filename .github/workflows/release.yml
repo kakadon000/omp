@@ -32,6 +32,8 @@ jobs:
 
       - name: Fetch libmpv engine + stage bundle resources
         shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           $ErrorActionPreference = "Stop"
           New-Item -ItemType Directory -Force -Path src-tauri/resources/media | Out-Null
@@ -52,6 +54,8 @@ jobs:
               break
             } catch {
               Write-Host "API attempt $i failed: $($_.Exception.Message)"
+              # fallback: if the token is rejected, try anonymous before giving up
+              $headers.Remove("Authorization") | Out-Null
               if ($i -eq 5) { throw }
               Start-Sleep -Seconds (20 * $i)
             }
