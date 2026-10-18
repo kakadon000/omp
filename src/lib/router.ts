@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 const ROUTES = [
   "home", "player", "music", "gallery", "editor",
-  "online", "widget", "library", "themes", "settings",
+  "online", "downloads", "widget", "library", "themes", "settings",
 ] as const;
 
 export type Route = (typeof ROUTES)[number];

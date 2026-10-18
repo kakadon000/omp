@@ -54,6 +54,15 @@ export function Editor({ settings }: { settings: Settings }) {
   const [format, setFormat] = useState<"mp4" | "webm" | "gif">("mp4");
   const [quality, setQuality] = useState<"high" | "medium" | "low">("high");
   const [ffMpeg, setFfMpeg] = useState<{ found: boolean; path: string } | null>(null);
+  // v0.14.0 — the editor no longer dies with the engine: when mpv is missing
+  // or refuses to attach, the preview falls back to a WebView <video> fed by
+  // the asset protocol. Trim/crop/overlays keep working, and exports (which
+  // run through the bundled ffmpeg, independent of mpv) were never affected.
+  const [engineDead, setEngineDead] = useState(false);
+  const [fileUrl, setFileUrl] = useState("");
+  const [speed, setSpeed] = useState(1);
+  const [vidErr, setVidErr] = useState(false);
+  const seekDragRef = useRef(false);
 
   const stageRef = useRef<HTMLDivElement>(null);
   const videoBoxRef = useRef<HTMLDivElement>(null);
@@ -69,6 +78,26 @@ export function Editor({ settings }: { settings: Settings }) {
   // crop TOOL edits the rectangle over the FULL frame; other tools see the
   // cropped preview. Mapping helpers use cropEff (null while cropping).
   const cropEff = tool === "crop" ? null : crop;
+  // native tunnel (mpv renders below the webview) vs <video> preview
+  const native = isTauri && isMpv && hasVideo && !engineDead;
+
+  // asset-protocol URL for the <video> fallback (also serves the web demo,
+  // which already stores an object URL in srcPath)
+  useEffect(() => {
+    let dead = false;
+    setVidErr(false);
+    setEngineDead(false);
+    setSpeed(1);
+    if (!isTauri || !p?.srcPath) {
+      setFileUrl(p?.srcPath || "");
+      return;
+    }
+    import("@tauri-apps/api/core").then(({ convertFileSrc }) => {
+      if (!dead) setFileUrl(convertFileSrc(p.srcPath));
+    });
+    return () => { dead = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [p?.srcPath]);
 
   /* ---------------- video source: open / restore ---------------- */
   const openVideo = async () => {
@@ -113,7 +142,10 @@ export function Editor({ settings }: { settings: Settings }) {
       if (ok && !dead) {
         void invoke("mpv_load", { source: p.srcPath, start: editorStore.get().project?.trim.s ?? 0 });
       } else if (!dead) {
-        toast("Native engine unavailable — editor preview disabled", "err");
+        // v0.14.0 — no toast-and-die: fall back to the WebView preview so the
+        // editor stays fully usable (export runs on the bundled ffmpeg anyway)
+        setEngineDead(true);
+        toast("Engine unavailable — using the built-in preview", "info");
       }
     })();
     return () => { dead = true; detachEngine(); };
@@ -121,11 +153,12 @@ export function Editor({ settings }: { settings: Settings }) {
   }, [isMpv, p?.srcPath]);
 
   // mpv-live: the native surface renders BELOW the webview — only while the
-  // editor actually previews a video through mpv.
+  // editor actually previews a video through mpv (the <video> fallback needs
+  // the normal opaque canvas)
   useEffect(() => {
-    document.documentElement.classList.toggle("mpv-live", isMpv && hasVideo);
+    document.documentElement.classList.toggle("mpv-live", native);
     return () => document.documentElement.classList.remove("mpv-live");
-  }, [isMpv, hasVideo]);
+  }, [native]);
 
   /* ---------------- surface rect: aspect-fit box (or crop sub-rect) -------- */
   useEffect(() => {
@@ -142,6 +175,9 @@ export function Editor({ settings }: { settings: Settings }) {
       if (!box) return;
       const br = box.getBoundingClientRect();
       if (br.width < 2 || br.height < 2) return;
+      // only the mpv tunnel owns a native surface rect — the <video> fallback
+      // renders inside the webview like any other element
+      if (isTauri && engineDead) return;
       void invoke("mpv_set_rect", {
         x: Math.round(br.left), y: Math.round(br.top),
         w: Math.round(br.width), h: Math.round(br.height),
@@ -153,7 +189,7 @@ export function Editor({ settings }: { settings: Settings }) {
     window.addEventListener("resize", push);
     const iv = window.setInterval(push, 700);
     return () => { ro.disconnect(); window.removeEventListener("resize", push); window.clearInterval(iv); };
-  }, [isMpv, hasVideo, dims, crop, tool]);
+  }, [isMpv, hasVideo, dims, crop, tool, engineDead]);
 
   // aspect-fit box geometry: contain (vw,vh) inside the stage rect
   const fitBox = (() => {
@@ -218,9 +254,11 @@ export function Editor({ settings }: { settings: Settings }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isMpv, hasVideo]);
 
-  /* ---------------- web demo fallback (browser build) ---------------- */
+  /* ---------------- web / engine-dead <video> fallback ---------------- */
+  // Drives the preview clock for BOTH the browser demo AND the desktop build
+  // when the native engine is unavailable (asset-protocol <video>).
   useEffect(() => {
-    if (isTauri || !hasVideo) return;
+    if (native || !hasVideo) return;
     const v = videoRef.current;
     if (!v) return;
     const onTime = () => {
@@ -242,11 +280,11 @@ export function Editor({ settings }: { settings: Settings }) {
       v.removeEventListener("timeupdate", onTime);
       v.removeEventListener("loadedmetadata", onMeta);
     };
-  }, [isTauri, hasVideo, p?.srcPath]);
+  }, [native, hasVideo, p?.srcPath, fileUrl]);
 
   const togglePlay = () => {
-    if (isMpv && hasVideo) void invoke("mpv_set_paused", { v: playing });
-    else if (!isTauri && videoRef.current) {
+    if (native) void invoke("mpv_set_paused", { v: playing });
+    else if (videoRef.current) {
       if (playing) videoRef.current.pause();
       else void videoRef.current.play();
     }
@@ -256,8 +294,15 @@ export function Editor({ settings }: { settings: Settings }) {
     const d = dur || p?.dur || 0;
     const c = Math.max(0, Math.min(d, ts));
     setT(c);
-    if (isMpv && hasVideo) void invoke("mpv_seek", { t: c });
-    else if (!isTauri && videoRef.current) videoRef.current.currentTime = c;
+    if (native) void invoke("mpv_seek", { t: c });
+    else if (videoRef.current) videoRef.current.currentTime = c;
+  };
+
+  /* ---------------- playback speed ---------------- */
+  const setRate = (r: number) => {
+    setSpeed(r);
+    if (native) void invoke("mpv_set_speed", { v: r });
+    else if (videoRef.current) videoRef.current.playbackRate = r;
   };
 
   /* ---------------- overlays ---------------- */
@@ -440,6 +485,24 @@ export function Editor({ settings }: { settings: Settings }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dur]);
 
+  /* ---------------- scrub: press-drag anywhere on the timeline ---------- */
+  useEffect(() => {
+    const move = (e: PointerEvent) => {
+      if (!seekDragRef.current || !dur) return;
+      const r = trimTrackRef.current?.getBoundingClientRect();
+      if (!r) return;
+      const c = Math.max(0, Math.min(dur, ((e.clientX - r.left) / r.width) * dur));
+      setT(c);
+      if (native) void invoke("mpv_seek", { t: c });
+      else if (videoRef.current) videoRef.current.currentTime = c;
+    };
+    const up = () => { seekDragRef.current = false; };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+    return () => { window.removeEventListener("pointermove", move); window.removeEventListener("pointerup", up); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dur, native]);
+
   /* ---------------- export ---------------- */
   useEffect(() => {
     if (!exportOpen || ffMpeg) return;
@@ -470,7 +533,14 @@ export function Editor({ settings }: { settings: Settings }) {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "z") { e.preventDefault(); if (e.shiftKey) redo(); else undo(); }
       else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "y") { e.preventDefault(); redo(); }
       else if (e.key === "Delete" || e.key === "Backspace") deleteSel();
-      else if (e.key === " ") { e.preventDefault(); togglePlay(); }
+      else if (e.key === " ") {
+        e.preventDefault();
+        // a button that was just clicked keeps focus — Space would re-click
+        // it instead of playing/pausing (the "editor is not working" feel)
+        const ae = document.activeElement as HTMLElement | null;
+        if (ae && ae.tagName === "BUTTON") ae.blur();
+        togglePlay();
+      }
     };
     window.addEventListener("keydown", on);
     return () => window.removeEventListener("keydown", on);
@@ -572,15 +642,30 @@ export function Editor({ settings }: { settings: Settings }) {
         <div className="ed-stage">
           <div className="ed-canvas-wrap" ref={stageRef} onClick={canvasClick}
             style={{ cursor: tool !== "select" && tool !== "crop" ? "crosshair" : "default" }}>
-            {/* video box = exact mpv surface rect (or web <video> box) */}
+            {/* video box = exact mpv surface rect (or the <video> preview) */}
             <div
               ref={videoBoxRef}
-              className={`ed-video-box ${isMpv && hasVideo ? "mpv" : ""}`}
+              className={`ed-video-box ${native ? "mpv" : ""}`}
               style={{ left: viewBox.left, top: viewBox.top, width: viewBox.width, height: viewBox.height, position: "absolute" }}
               onPointerDown={(e) => { if (tool === "crop" && crop) onCropDown(e, "move"); }}
             >
-              {!isTauri && (
-                <video ref={videoRef} src={p.srcPath} playsInline style={{ width: "100%", height: "100%", borderRadius: "inherit" }} />
+              {!native && (
+                <video
+                  ref={videoRef}
+                  src={fileUrl || p.srcPath}
+                  playsInline
+                  style={{ width: "100%", height: "100%", borderRadius: "inherit" }}
+                  onError={() => setVidErr(true)}
+                />
+              )}
+              {!native && vidErr && (
+                <div className="ed-viderr">
+                  <Icon name="film" size={20} />
+                  <div>
+                    <b>This format can't preview in the built-in view</b>
+                    <span>Export still works (bundled FFmpeg) — and the Player plays it with the native engine.</span>
+                  </div>
+                </div>
               )}
 
               {/* crop rectangle — drawn over the FULL frame view (crop mode) */}
@@ -663,16 +748,30 @@ export function Editor({ settings }: { settings: Settings }) {
               <button className="icon-btn" onClick={togglePlay} aria-label="Play/Pause">
                 <Icon name={playing ? "pause" : "play"} />
               </button>
+              <button className="btn sm" onClick={() => seekTo(t - 5)} aria-label="Back 5s" title="Back 5s">
+                <Icon name="undo" size={12} />5s
+              </button>
+              <button className="btn sm" onClick={() => seekTo(t + 5)} aria-label="Forward 5s" title="Forward 5s">
+                5s<Icon name="redo" size={12} />
+              </button>
+              <div className="seg ed-speed" style={{ marginLeft: 2 }}>
+                {[0.5, 1, 1.5, 2].map((r) => (
+                  <button key={r} className={speed === r ? "on" : ""} onClick={() => setRate(r)}>
+                    {r}×
+                  </button>
+                ))}
+              </div>
+              <span style={{ flex: 1 }} />
               <span style={{ fontSize: 12, fontWeight: 600, color: "var(--text-2)" }}>Trim</span>
               <span className="chip kf-chip">{fmtTime(p.trim.s)}</span>
               <span style={{ color: "var(--text-3)" }}>→</span>
               <span className="chip kf-chip">{fmtTime(p.trim.e || dur)}</span>
-              <span style={{ flex: 1 }} />
               <button className="btn sm" onClick={() => mutate((pp) => ({ ...pp, trim: { s: 0, e: dur } }), false)}>Reset</button>
             </div>
             <div className="trim-track" ref={trimTrackRef}
               onPointerDown={(e) => {
                 const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                seekDragRef.current = true; // hold-and-drag scrubs (v0.14.0)
                 seekTo(((e.clientX - r.left) / r.width) * (dur || 0));
               }}>
               <div className="trim-canvas">{Array.from({ length: 44 }, (_, i) => <i key={i} style={{ opacity: 0.22 + ((i * 7) % 10) / 14 }} />)}</div>

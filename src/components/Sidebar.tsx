@@ -9,6 +9,7 @@ const ITEMS: { r: Route; icon: string; label: string; sep?: boolean }[] = [
   { r: "gallery", icon: "image", label: "Gallery" },
   { r: "editor", icon: "scissors", label: "Editor", sep: true },
   { r: "online", icon: "globe", label: "Online" },
+  { r: "downloads", icon: "download", label: "Downloads" },
   { r: "widget", icon: "layers", label: "Widget" },
   { r: "library", icon: "folder", label: "Library", sep: true },
   { r: "themes", icon: "palette", label: "Theme Studio" },

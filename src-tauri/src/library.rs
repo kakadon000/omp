@@ -116,7 +116,15 @@ pub fn open_db(path: &Path) -> Result<Connection, String> {
            path TEXT NOT NULL,
            position INTEGER NOT NULL
          );
-         CREATE INDEX IF NOT EXISTS idx_pl_items ON playlist_items(playlist_id, position);",
+         CREATE INDEX IF NOT EXISTS idx_pl_items ON playlist_items(playlist_id, position);
+         CREATE TABLE IF NOT EXISTS downloads (
+           url TEXT NOT NULL,
+           title TEXT NOT NULL,
+           path TEXT NOT NULL,
+           quality TEXT DEFAULT '',
+           created INTEGER NOT NULL
+         );
+         CREATE INDEX IF NOT EXISTS idx_dl_created ON downloads(created);",
     )
     .map_err(|e| e.to_string())?;
     // migrations — older installs predate the tag-metadata columns
@@ -933,5 +941,12 @@ impl LibraryState {
             db_path,
             thumbs,
         }
+    }
+
+    /// v0.14.0 — shared write access for the downloader history table.
+    pub(crate) fn db_lock(
+        &self,
+    ) -> Result<std::sync::MutexGuard<'_, Connection>, String> {
+        self.db.lock().map_err(|e| e.to_string())
     }
 }

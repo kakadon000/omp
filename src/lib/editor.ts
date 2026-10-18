@@ -240,6 +240,28 @@ export async function startExport(
   // exact order of `pngs` (Rust zips them by index).
   const burn = p.overlays.filter((o) => o.end > p.trim.s + 0.02 && o.start < p.trim.e - 0.02);
   const payload: OmpProject = { ...structuredClone(p), overlays: burn };
+  // v0.14.0 fix — subscribe BEFORE spawning ffmpeg. A short clip can finish
+  // in under a second; listeners attached after the invoke returned used to
+  // miss the done event and leave the modal stuck at "Rendering…" forever.
+  const { tauriListen } = await import("./tauri");
+  const unlisten: Array<() => void> = [];
+  let settled = false;
+  void tauriListen<{ pct: number; elapsed: number; total: number }>("omp://export-progress", (d) => {
+    exp = { ...exp, pct: d?.pct ?? 0, elapsed: d?.elapsed ?? 0, total: d?.total ?? exp.total };
+    expEmit();
+  }).then((un) => unlisten.push(un));
+  void tauriListen<{ ok: boolean; out?: string; error?: string; cancelled?: boolean }>("omp://export-done", (d) => {
+    if (settled) return; // ignore events from an older render
+    settled = true;
+    exp = {
+      ...exp, running: false,
+      out: d?.ok ? d.out ?? null : null,
+      error: d?.ok ? null : d?.cancelled ? "cancelled" : d?.error || "export failed",
+      cancelled: !!d?.cancelled,
+    };
+    expEmit();
+    unlisten.splice(0).forEach((un) => un());
+  }).then((un) => unlisten.push(un));
   const ok = await invoke<boolean>("editor_export", {
     project: payload,
     overlays: pngs,
@@ -248,27 +270,12 @@ export async function startExport(
     quality,
   });
   if (ok === false) {
+    settled = true;
     exp = { ...exp, running: false, error: "Exporter busy or unavailable" };
     expEmit();
+    unlisten.splice(0).forEach((un) => un());
     return false;
   }
-  // progress + done listeners
-  const { tauriListen } = await import("./tauri");
-  void tauriListen<{ pct: number; elapsed: number; total: number }>("omp://export-progress", (d) => {
-    exp = { ...exp, pct: d?.pct ?? 0, elapsed: d?.elapsed ?? 0, total: d?.total ?? exp.total };
-    expEmit();
-  }).then((un1) => {
-    void tauriListen<{ ok: boolean; out?: string; error?: string; cancelled?: boolean }>("omp://export-done", (d) => {
-      exp = {
-        ...exp, running: false,
-        out: d?.ok ? d.out ?? null : null,
-        error: d?.ok ? null : d?.cancelled ? "cancelled" : d?.error || "export failed",
-        cancelled: !!d?.cancelled,
-      };
-      expEmit();
-      un1();
-    });
-  });
   return true;
 }
 

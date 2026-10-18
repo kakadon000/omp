@@ -28,6 +28,38 @@ distinctive, not into reinventing video decoding.
   you pick**, ten one-tap presets, themes that travel as `.omptheme` files,
   adjustable transparency, Reduced Effects for low-end PCs.
 
+## What's new in v0.14.0 — the Downloader, and an editor that never dies
+
+- **Downloader — save videos from anywhere.** A new screen (sidebar + Home
+  tile) driven by the same official **yt-dlp** engine OMP has bundled since
+  v0.9.0 — which means **YouTube, Instagram, X/Twitter, TikTok, Facebook,
+  LinkedIn and 1000+ other platforms** all work through one paste box. Paste
+  a link, hit Fetch, get the real title, channel, duration and thumbnail,
+  pick a quality (**Best / 1080p / 720p / 480p / MP3 audio**), and watch the
+  accent progress bar with live speed and ETA. Separate video+audio streams
+  are merged by the bundled FFmpeg; MP3 extraction uses it too. Files land
+  in a folder you choose (defaults to OMP's data folder → Downloads, change
+  it any time), history is kept in the local SQLite library, and every job
+  can be cancelled with a real process kill. Up to four downloads at once.
+- **The editor is no longer hostage to the engine.** Previously, if the mpv
+  engine was missing or refused to attach on your machine, the Editor showed
+  a toast and died — no preview at all. Now it falls back to a built-in
+  WebView preview (asset protocol): trim, crop, overlays and the timeline
+  keep working, and **export was never affected anyway** because it runs on
+  the bundled FFmpeg, independent of mpv. If a codec can't decode in the
+  built-in view (MKV/HEVC on some machines), an honest note tells you
+  export still works.
+- **Export-stuck bug fixed.** The export modal subscribed to FFmpeg's
+  progress events *after* starting FFmpeg — a short clip could finish
+  before the listener attached and leave the modal stuck at "Rendering…
+  0%" forever. Listeners now attach first, with stale-render protection.
+- **Editor polish:** hold-and-drag scrubbing anywhere on the timeline,
+  ±5s skip buttons, 0.5×–2× speed chips (native engine and preview alike),
+  Space no longer re-triggers the button you just clicked (the classic
+  "space does nothing" feel), and a friendlier transport row.
+- **Untouched by design:** radio, engine internals, self-heal, EQ, sleep
+  timer, Theme Studio, Online tabs, drag & drop.
+
 ## What's new in v0.13.0 — drag & drop anything, your week in bars
 
 - **Drag & drop anything.** Drop files anywhere on the OMP window and they

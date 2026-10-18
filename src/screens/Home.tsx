@@ -201,6 +201,7 @@ export function Home({ query }: { query: string }) {
     { icon: "music", label: "Music", sub: String(stats ? stats.audio : TRACKS.length), go: () => navigate("music") },
     { icon: "image", label: "Gallery", sub: String(IMAGES.length), go: () => navigate("gallery") },
     { icon: "globe", label: "Online", sub: "YouTube · IPTV", go: () => navigate("online") },
+    { icon: "download", label: "Downloads", sub: "YouTube · Insta · X", go: () => navigate("downloads") },
     { icon: "scissors", label: "Editor", sub: "Trim & cut", go: () => navigate("editor") },
     { icon: "layers", label: "Widget", sub: "Mini player", go: () => navigate("widget") },
   ], [stats]);

@@ -70,6 +70,7 @@ mod mpv;
 mod library;
 mod editor;
 mod health;
+mod downloader;
 
 /// Detect the Windows build number from the OS plugin (e.g. "10.0.22631").
 #[cfg(windows)]
@@ -822,6 +823,13 @@ pub fn run() {
             health::omp_health,
             health::omp_repair_download,
             health::omp_open_install_folder,
+            downloader::dl_status,
+            downloader::dl_fetch_info,
+            downloader::dl_start,
+            downloader::dl_cancel,
+            downloader::dl_history_add,
+            downloader::dl_history_list,
+            downloader::dl_history_clear,
             mpv::mpv_diag
         ])
         .on_window_event(|window, event| {

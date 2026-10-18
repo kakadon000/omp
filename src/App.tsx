@@ -24,6 +24,7 @@ import { Player } from "./screens/Player";
 import { Music, NowPlayingBar } from "./screens/Music";
 import { Gallery } from "./screens/Gallery";
 import { Editor } from "./screens/Editor";
+import { Downloader } from "./screens/Downloader";
 // Online screen is code-split (bundled ≠ loaded: iframes + search UI only
 // download when first visited)
 const Online = lazy(() =>
@@ -36,7 +37,7 @@ import { Settings as SettingsScreen } from "./screens/Settings";
 
 const ROUTE_ORDER: Route[] = [
   "home", "player", "music", "gallery", "editor",
-  "online", "widget", "library", "themes", "settings",
+  "online", "downloads", "widget", "library", "themes", "settings",
 ];
 
 export default function App() {
@@ -257,6 +258,7 @@ export default function App() {
       case "gallery": return <Gallery query={query} />;
       case "editor": return <Editor settings={settings} />;
       case "online": return <Suspense fallback={<div className="empty" style={{ padding: 80 }}><div className="t">Loading online…</div></div>}><Online query={query} /></Suspense>;
+      case "downloads": return <Downloader />;
       case "widget": return <WidgetPage />;
       case "library": return <Library query={query} />;
       case "themes": return <Themes settings={settings} update={update} />;
