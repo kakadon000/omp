@@ -37,17 +37,17 @@ export function Downloader() {
   useEffect(() => {
     if (!isTauri) return;
     void wireDlEvents();
-    void dlStatus().then((s) => setStatus(s));
+    void dlStatus().then((s) => setStatus(s)).catch(() => setStatus({ available: false, path: "", version: "", ffmpeg: false }));
     if (!savedDir()) {
       void import("@tauri-apps/api/path").then(({ appDataDir }) =>
         appDataDir().then((base) => {
           const d = `${base.replace(/[\\/]+$/, "")}\\Downloads`;
           rememberDir(d);
           setDir(d);
-        })
+        }).catch(() => { /* keep the manual folder picker */ })
       );
     }
-    void dlHistory().then(setHist);
+    void dlHistory().then(setHist).catch(() => setHist([]));
   }, []);
 
   const refreshHist = () => void dlHistory().then(setHist);
@@ -68,13 +68,19 @@ export function Downloader() {
     if (!u) return;
     setBusy(true);
     setInfo(null);
-    const r = await fetchInfo(u);
-    setBusy(false);
-    if (!r) {
+    try {
+      const r = await fetchInfo(u);
+      if (!r) {
+        toast("Could not resolve that link — is it public and supported?", "err");
+        return;
+      }
+      setInfo(r);
+    } catch {
+      // v0.14.1 — a rejected fetch used to leave the button on "Resolving…" forever
       toast("Could not resolve that link — is it public and supported?", "err");
-      return;
+    } finally {
+      setBusy(false);
     }
-    setInfo(r);
   };
 
   const maxH = info?.formats.reduce((a, f) => Math.max(a, f.height), 0) || 0;
@@ -118,15 +124,15 @@ export function Downloader() {
         </div>
         <span style={{ flex: 1 }} />
         <button
-          className={`hero-engine ${engineOk ? "ok" : "bad"}`}
+          className={`hero-engine ${status ? (engineOk ? "ok" : "bad") : ""}`}
           onClick={() => { /* informational pill */ }}
           style={{ cursor: "default" }}
           title={status?.path || "yt-dlp"}
         >
-          <span className={`health-dot ${engineOk ? "ok" : "bad"}`} />
+          <span className={`health-dot ${status ? (engineOk ? "ok" : "bad") : ""}`} />
           <span className="he-col">
-            <span className="he-t">{engineOk ? `yt-dlp ${status?.version || "ready"}` : "yt-dlp missing"}</span>
-            <span className="he-s">{engineOk ? "bundled engine · local" : "Settings → Engine & tools → Repair"}</span>
+            <span className="he-t">{status ? (engineOk ? `yt-dlp ${status?.version || "ready"}` : "yt-dlp missing") : "yt-dlp — checking…"}</span>
+            <span className="he-s">{status ? (engineOk ? "bundled engine · local" : "Settings → Engine & tools → Repair") : "talking to the bundled engine"}</span>
           </span>
         </button>
       </div>

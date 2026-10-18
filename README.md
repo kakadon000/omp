@@ -28,6 +28,31 @@ distinctive, not into reinventing video decoding.
   you pick**, ten one-tap presets, themes that travel as `.omptheme` files,
   adjustable transparency, Reduced Effects for low-end PCs.
 
+## What's new in v0.14.1 — nothing stuck, ever
+
+- **The editor's "reading media…" can no longer hang.** When a clip's codec
+  can't decode in the built-in preview (HEVC is the usual suspect) or the
+  native engine is unavailable, the editor now asks the **bundled FFmpeg** to
+  read duration and dimensions straight from the container — no engine, no
+  decode, ~instant. Trim, scrub, A-B overlays and export all come back to
+  life, and the info panel always tells the truth: reading, read, or
+  "metadata unavailable — trim & export still work".
+- **Hung engine attach can't freeze the editor.** A broken engine DLL can
+  hang *during* attach instead of returning an error — the editor now races
+  a 6-second deadline and falls back to the built-in preview either way.
+- **Every loading state got an error path.** "Loading playlists…" on Home
+  (plus Music and Library playlists, Music library, stats counters) now
+  resolve on failure and carry a 6-second deadline backstop — a hiccuping
+  DB command can never leave an eternal spinner again.
+- **Downloader hardening:** the Fetch button can no longer stick on
+  "Resolving…" if the resolve command errors, and the yt-dlp pill now shows
+  an honest "checking…" while the engine probe runs instead of jumping
+  straight to "missing".
+- **Online screen self-heal:** if the lazy-loaded Online module ever fails
+  to arrive, you get a Retry card instead of a frozen "Loading online…".
+- **Untouched by design:** radio, engine internals, self-heal, EQ, sleep
+  timer, Theme Studio, Online tabs, drag & drop, the downloader itself.
+
 ## What's new in v0.14.0 — the Downloader, and an editor that never dies
 
 - **Downloader — save videos from anywhere.** A new screen (sidebar + Home

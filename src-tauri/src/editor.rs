@@ -60,6 +60,26 @@ pub fn editor_ffmpeg_status() -> Value {
     }
 }
 
+/// v0.14.1 — engine-independent metadata probe for the editor.
+/// When neither mpv nor the WebView can decode a file (broken engine DLL,
+/// HEVC-only clips, …) the preview can never report duration — the editor
+/// used to sit on "reading media…" forever. The bundled ffmpeg reads the
+/// container without decoding for playback, so trim/scrub/export all come
+/// back to life. Runs info-only (no thumbnail), ~instant for local files.
+#[tauri::command]
+pub fn editor_media_probe(path: String) -> Value {
+    match ffmpeg_probe(&path, None, false) {
+        Some(m) => serde_json::json!({
+            "dur": m.duration,
+            "w": m.width,
+            "h": m.height,
+            "vcodec": m.video_codec,
+            "acodec": m.audio_codec,
+        }),
+        None => Value::Null,
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /*  v0.9.0 — ffmpeg fallback probe for the library scanner             */
 /* ------------------------------------------------------------------ */

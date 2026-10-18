@@ -62,6 +62,10 @@ export function Editor({ settings }: { settings: Settings }) {
   const [fileUrl, setFileUrl] = useState("");
   const [speed, setSpeed] = useState(1);
   const [vidErr, setVidErr] = useState(false);
+  // v0.14.1 — true once the ffmpeg metadata backstop has ANSWERED (ok or not);
+  // the info panel uses it to show an honest state instead of an eternal
+  // "reading media…" spinner
+  const [probed, setProbed] = useState(false);
   const seekDragRef = useRef(false);
 
   const stageRef = useRef<HTMLDivElement>(null);
@@ -138,7 +142,13 @@ export function Editor({ settings }: { settings: Settings }) {
     }
     let dead = false;
     void (async () => {
-      const ok = await attachEngine(settings.hwAccel);
+      // v0.14.1 — a broken engine DLL can HANG during attach instead of
+      // returning false; race a 6s deadline so the editor always falls into
+      // the WebView preview path instead of waiting on a black tunnel forever
+      const ok = await Promise.race([
+        attachEngine(settings.hwAccel),
+        new Promise<boolean>((res) => setTimeout(() => res(false), 6000)),
+      ]);
       if (ok && !dead) {
         void invoke("mpv_load", { source: p.srcPath, start: editorStore.get().project?.trim.s ?? 0 });
       } else if (!dead) {
@@ -281,6 +291,42 @@ export function Editor({ settings }: { settings: Settings }) {
       v.removeEventListener("loadedmetadata", onMeta);
     };
   }, [native, hasVideo, p?.srcPath, fileUrl]);
+
+  /* v0.14.1 — metadata backstop: when the fallback <video> can't decode
+   * (HEVC-only clips, protected profiles) the preview NEVER reports a
+   * duration and the editor felt stuck on "reading media…". The bundled
+   * ffmpeg reads duration + dimensions straight from the container — no
+   * engine needed — so trim, scrub and export stay alive. Runs once, 4.5s
+   * after the source appears (or immediately on a decode error). */
+  useEffect(() => {
+    if (native || !hasVideo || dur) return;
+    if (!isTauri) {
+      // web demo: no probe command — the <video> element is the only reader
+      if (vidErr) setProbed(true);
+      return;
+    }
+    let dead = false;
+    const run = () => {
+      void invoke<{ dur: number; w: number; h: number } | null>("editor_media_probe", { path: p?.srcPath })
+        .then((m) => {
+          if (dead) return;
+          if (!m || !m.dur) { setProbed(true); return; }
+          setDur(m.dur);
+          if (m.w) setDims({ w: m.w, h: m.h || Math.round((m.w * 9) / 16) });
+          setProbed(true);
+          const cur = editorStore.get().project;
+          if (cur && !cur.trim.e) mutate((pp) => ({ ...pp, trim: { s: 0, e: m.dur } }), false);
+        })
+        .catch(() => { if (!dead) setProbed(true); });
+    };
+    if (vidErr) {
+      run();
+      return () => { dead = true; };
+    }
+    const t = setTimeout(run, 4500);
+    return () => { dead = true; clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [native, hasVideo, p?.srcPath, fileUrl, vidErr, dur]);
 
   const togglePlay = () => {
     if (native) void invoke("mpv_set_paused", { v: playing });
@@ -837,7 +883,13 @@ export function Editor({ settings }: { settings: Settings }) {
           <div className="side-sep" style={{ margin: 0 }} />
           <div style={{ fontSize: 12, color: "var(--text-2)", lineHeight: 1.8 }}>
             <b style={{ color: "var(--text)" }}>Project</b><br />
-            {dur ? `${dims ? `${dims.w}×${dims.h}` : "…"} · ${fmtTime(dur)}` : "reading media…"}<br />
+            {dur
+              ? `${dims ? `${dims.w}×${dims.h}` : "…"} · ${fmtTime(dur)}`
+              : probed
+                ? "Metadata unavailable — trim & export still work"
+                : vidErr
+                  ? "Reading with FFmpeg…"
+                  : "reading media…"}<br />
             Saves as .ompj · Ctrl+Z undo · Space play
           </div>
         </div>

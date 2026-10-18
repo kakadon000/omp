@@ -35,7 +35,9 @@ function useMusicLibrary(query: string) {
     if (!isTauri) return;
     let dead = false;
     void invoke<LibItem[]>("library_list", { query, kind: "audio", sort: "title" })
-      .then((r) => { if (!dead) setItems(r ?? []); });
+      .then((r) => { if (!dead) setItems(r ?? []); })
+      // v0.14.1 — a rejected command must not leave the music screen empty-forever
+      .catch(() => { if (!dead) setItems([]); });
     return () => { dead = true; };
   }, [query, tick]);
 
@@ -53,7 +55,7 @@ function usePlaylists() {
   const [pls, setPls] = useState<Playlist[]>([]);
   const refresh = useCallback(() => {
     if (!isTauri) return;
-    void invoke<Playlist[]>("playlists_all").then((r) => setPls(r ?? []));
+    void invoke<Playlist[]>("playlists_all").then((r) => setPls(r ?? [])).catch(() => setPls([]));
   }, []);
   useEffect(refresh, [refresh]);
   useEffect(() => {

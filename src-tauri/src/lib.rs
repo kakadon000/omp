@@ -800,6 +800,7 @@ pub fn run() {
             library::playlist_remove_item,
             library::playlist_items,
             editor::editor_ffmpeg_status,
+            editor::editor_media_probe,
             editor::editor_write_png,
             editor::editor_write_project,
             editor::editor_read_project,

@@ -1,4 +1,5 @@
-import { lazy, Suspense, useEffect, useRef, useMemo, useState } from "react";
+import { Component, lazy, Suspense, useEffect, useRef, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { TitleBar } from "./components/TitleBar";
 import { Sidebar } from "./components/Sidebar";
@@ -35,6 +36,29 @@ import { Library } from "./screens/Library";
 import { Themes } from "./screens/Themes";
 import { Settings as SettingsScreen } from "./screens/Settings";
 
+// v0.14.1 — the lazy Online chunk (iframes + search UI) failed to load once →
+// the Suspense fallback ("Loading online…") used to sit there forever. React
+// routes lazy-load rejections to the nearest error boundary — this one gives
+// the user a retry instead of an eternal spinner.
+class OnlineBoundary extends Component<{ children: ReactNode }, { err: boolean }> {
+  state = { err: false };
+  static getDerivedStateFromError() { return { err: true }; }
+  render() {
+    if (this.state.err) {
+      return (
+        <div className="empty" style={{ padding: 80 }}>
+          <div className="t">Online failed to load</div>
+          <div style={{ fontSize: 12.5, color: "var(--text-3)", margin: "8px 0 14px" }}>
+            The screen module didn't arrive — usually a one-off.
+          </div>
+          <button className="btn accent" onClick={() => this.setState({ err: false })}>Retry</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 const ROUTE_ORDER: Route[] = [
   "home", "player", "music", "gallery", "editor",
   "online", "downloads", "widget", "library", "themes", "settings",
@@ -59,7 +83,7 @@ export default function App() {
     void initEngine(settings.engine); // resolve mpv availability before the Player mounts
     getShellInfo().then((info) => {
       if (info && info.win !== "other") document.documentElement.dataset.win = info.win;
-    });
+    }).catch(() => { /* cosmetic — Windows-generation styling only */ });
     // v0.13.0 — a quiet weekly update nudge; fires only when a newer
     // release actually exists, and never nags more than once a week
     const UPD_KEY = "omp.updatecheck.at";
@@ -205,7 +229,7 @@ export default function App() {
         navigate("player");
       }
     };
-    void invoke<string[]>("pending_open_paths").then((ps) => ps?.forEach(openPath));
+    void invoke<string[]>("pending_open_paths").then((ps) => ps?.forEach(openPath)).catch(() => { /* best-effort at boot */ });
     openPathRef.current = openPath; // drag & drop reuses this exact routing
     let un: (() => void) | undefined;
     void tauriListen<string>("omp://open-path", openPath).then((fn) => { un = fn; });
@@ -257,7 +281,7 @@ export default function App() {
       case "music": return <Music query={query} />;
       case "gallery": return <Gallery query={query} />;
       case "editor": return <Editor settings={settings} />;
-      case "online": return <Suspense fallback={<div className="empty" style={{ padding: 80 }}><div className="t">Loading online…</div></div>}><Online query={query} /></Suspense>;
+      case "online": return <OnlineBoundary><Suspense fallback={<div className="empty" style={{ padding: 80 }}><div className="t">Loading online…</div></div>}><Online query={query} /></Suspense></OnlineBoundary>;
       case "downloads": return <Downloader />;
       case "widget": return <WidgetPage />;
       case "library": return <Library query={query} />;

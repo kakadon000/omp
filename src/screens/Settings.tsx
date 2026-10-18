@@ -136,7 +136,7 @@ export function Settings({ settings, update }: { settings: SettingsShape; update
       setRepair(e);
       if (e.phase === "done") {
         refreshHealth();
-        void invoke<boolean>("mpv_retest").then(() => initEngine(settings.engine));
+        void invoke<boolean>("mpv_retest").then(() => initEngine(settings.engine)).catch(() => { /* engine stays as-is */ });
         setTimeout(() => setRepair(null), 4000);
       } else if (e.phase === "error") {
         setTimeout(() => setRepair(null), 6000);
@@ -144,7 +144,7 @@ export function Settings({ settings, update }: { settings: SettingsShape; update
     }).then((un) => { un1 = un; });
     void tauriListen<boolean>("omp://repair-refresh", () => {
       refreshHealth();
-      void invoke<boolean>("mpv_retest").then(() => initEngine(settings.engine));
+      void invoke<boolean>("mpv_retest").then(() => initEngine(settings.engine)).catch(() => { /* engine stays as-is */ });
     }).then((un) => { un2 = un; });
     return () => { un1?.(); un2?.(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -154,9 +154,9 @@ export function Settings({ settings, update }: { settings: SettingsShape; update
   // feeling in this screen is now an exact, visible engine status
   useEffect(() => {
     if (!isTauri) return;
-    void invoke<EngineDiag>("mpv_diag").then((d) => setDiag(d));
-    void ffmpegStatus().then(setFfFound);
-    void ytdlpStatus().then(setYtdlp);
+    void invoke<EngineDiag>("mpv_diag").then((d) => setDiag(d)).catch(() => setDiag(null));
+    void ffmpegStatus().then(setFfFound).catch(() => setFfFound(null));
+    void ytdlpStatus().then(setYtdlp).catch(() => setYtdlp(null));
     refreshHealth();
   }, [eng.available]);
 

@@ -56,13 +56,20 @@ export function Home({ query }: { query: string }) {
   }, []);
 
   // real playlists — also refresh when they change anywhere in the app
+  // v0.14.1 — error + deadline guards: a hiccuping DB command must never
+  // leave the home screen on "Loading playlists…" forever
   useEffect(() => {
     if (!isTauri) return;
     let dead = false;
-    const load = () => void invoke<Playlist[]>("playlists_all").then((r) => { if (!dead) setPlaylists(r ?? []); });
+    const load = () =>
+      void invoke<Playlist[]>("playlists_all")
+        .then((r) => { if (!dead) setPlaylists(r ?? []); })
+        .catch(() => { if (!dead) setPlaylists([]); });
     load();
+    // deadline backstop — even a command that never answers resolves the UI
+    const t = setTimeout(() => setPlaylists((cur) => cur ?? []), 6000);
     window.addEventListener("omp:playlists", load);
-    return () => { dead = true; window.removeEventListener("omp:playlists", load); };
+    return () => { dead = true; clearTimeout(t); window.removeEventListener("omp:playlists", load); };
   }, []);
 
   // real library counters (videos / tracks / folders watched over by the DB)
@@ -71,7 +78,7 @@ export function Home({ query }: { query: string }) {
     let dead = false;
     void invoke<{ videos: number; audio: number; folders: number }>("library_stats").then((s) => {
       if (!dead && s) setStats({ videos: s.videos ?? 0, audio: s.audio ?? 0, folders: s.folders ?? 0 });
-    });
+    }).catch(() => { if (!dead) setStats({ videos: 0, audio: 0, folders: 0 }); });
     return () => { dead = true; };
   }, []);
 

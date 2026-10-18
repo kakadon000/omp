@@ -369,7 +369,7 @@ function PlaylistsTab() {
 
   const refresh = useCallback(() => {
     if (!isTauri) return;
-    void invoke<PlaylistRow[]>("playlists_all").then((r) => setPls(r ?? []));
+    void invoke<PlaylistRow[]>("playlists_all").then((r) => setPls(r ?? [])).catch(() => setPls([]));
   }, []);
 
   useEffect(refresh, [refresh]);
