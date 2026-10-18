@@ -9,6 +9,7 @@ import { VIDEOS, IMAGES, TRACKS, type VideoItem } from "../lib/data";
 import { loadProgress, saveProgress, pushHistory, loadHistory, customMedia, removeHistory, clearHistory, type CustomMedia, type HistItem } from "../lib/store";
 import { videoQueue } from "../lib/videoQueue";
 import { playTracks, libItemToTrack } from "../lib/audio";
+import { last7Days, fmtHm } from "../lib/watchtime";
 import { fmtTime, pct } from "../lib/format";
 
 function useCustomMedia(): CustomMedia {
@@ -40,6 +41,12 @@ export function Home({ query }: { query: string }) {
   const [hist, setHist] = useState<HistItem[]>(() => loadHistory().slice(0, 12));
   // real library counters from SQLite
   const [stats, setStats] = useState<{ videos: number; audio: number; folders: number } | null>(null);
+  // this-week stats — light 30s re-render so the card stays honest while you sit on Home
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const t = setInterval(() => setTick((n) => n + 1), 30000);
+    return () => clearInterval(t);
+  }, []);
 
   useEffect(() => {
     const d = new Date();
@@ -209,6 +216,12 @@ export function Home({ query }: { query: string }) {
   ];
 
   const shown = (arr: HistItem[]) => arr.filter((h) => filtered([h.name]));
+
+  // this-week watch/listen numbers (v0.13.0)
+  const week = last7Days();
+  const totV = week.reduce((a, d) => a + d.video, 0);
+  const totM = week.reduce((a, d) => a + d.music, 0);
+  const maxDay = Math.max(60, ...week.map((d) => d.video + d.music));
 
   return (
     <div className="home">
@@ -392,6 +405,41 @@ export function Home({ query }: { query: string }) {
                 </div>
               </div>
             ))}
+          </div>
+
+          <div className="section-label">This week</div>
+          <div className="card panel week-card">
+            <div className="wk-head">
+              <div>
+                <div className="wk-total">{fmtHm(totV + totM)}</div>
+                <div className="wk-sub">watched &amp; listened in 7 days</div>
+              </div>
+              <div className="wk-legend">
+                <span><i className="dot v" /> Video</span>
+                <span><i className="dot m" /> Music</span>
+              </div>
+            </div>
+            <div className="wk-bars">
+              {week.map((d, i) => {
+                const tot = d.video + d.music;
+                const tip = [
+                  d.video > 0 ? `Video ${fmtHm(d.video)}` : "",
+                  d.music > 0 ? `Music ${fmtHm(d.music)}` : "",
+                ].filter(Boolean).join(" · ") || "Nothing yet";
+                const h = Math.max(tot > 0 ? 8 : 3, Math.round((tot / maxDay) * 100));
+                return (
+                  <div key={d.day} className={`wk-col ${i === week.length - 1 ? "today" : ""}`} title={tip}>
+                    <div className="wk-track">
+                      <div className="wk-bar" style={{ height: `${h}%` }}>
+                        <i className="wv" style={{ flexGrow: d.video }} />
+                        <i className="wm" style={{ flexGrow: d.music }} />
+                      </div>
+                    </div>
+                    <span className="wk-l">{d.label}</span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
           <div className="section-label">

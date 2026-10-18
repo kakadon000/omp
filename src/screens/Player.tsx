@@ -13,6 +13,7 @@ import { robustSeek } from "../lib/media";
 import { engineStore, onMpvEvent, attachEngine, detachEngine, parseTracks } from "../lib/engine";
 import { audioStore, stopSession, type AudioState } from "../lib/audio";
 import { sleepTimer } from "../lib/sleep";
+import { addWatch } from "../lib/watchtime";
 import type { VideoItem } from "../lib/data";
 
 type MenuKind = "speed" | "subs" | "audio" | "sleep" | null;
@@ -210,6 +211,7 @@ export function Player({ settings }: { settings: Settings }) {
       switch (e.kind) {
         case "tick": {
           setTime(e.t);
+          addWatch("video", e.t);
           const now = Date.now();
           if (!custom.url && now - lastSave.current > 2000) {
             lastSave.current = now;

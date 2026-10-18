@@ -28,6 +28,32 @@ distinctive, not into reinventing video decoding.
   you pick**, ten one-tap presets, themes that travel as `.omptheme` files,
   adjustable transparency, Reduced Effects for low-end PCs.
 
+## What's new in v0.13.0 — drag & drop anything, your week in bars
+
+- **Drag & drop anything.** Drop files anywhere on the OMP window and they
+  take the exact same route as "Open with OMP": video → Player, audio →
+  Music, images → Gallery, `.m3u`/`.m3u8` → imported into Live TV,
+  `.omptheme` → applied instantly, `.ompj` → opened in the Editor. A glass
+  veil with a dashed accent border tells you the drop is live before you let
+  go. Multiple files at once work too — every dropped path is routed on its
+  own merits.
+- **This week — your time, honestly charted.** Home's right rail now has a
+  card with seven daily bars (your accent, of course) splitting **video**
+  (solid) from **music** (45% wash), a big total on top and a legend, with
+  per-day tooltips ("Video 1h 12m · Music 34m"). The counter is delta-based
+  and seek-proof: time only counts when the engine's clock actually moves
+  forward in small realistic steps, so pauses, seeks and engine rebuilds
+  never inflate your numbers. Days roll on a 14-day window in localStorage —
+  nothing leaves your machine.
+- **A quiet update nudge.** Once a week at boot, OMP quietly asks GitHub
+  whether a newer release exists — and only speaks up when one does, with a
+  single toast pointing at Settings → About. Offline? Silence. Same version?
+  Silence. No popup spam, ever.
+- **Under the hood this round:** the open-with router is now shared verbatim
+  by "Open with OMP", command-line launches and drag & drop (one code path —
+  one set of behaviors), and everything is pure frontend again: self-heal,
+  equalizer, sleep timer, Theme Studio, Online tabs — all untouched.
+
 ## What's new in v0.12.0 — Home, redesigned
 
 - **Hero 2.0.** The welcome banner grew into a real dashboard header: an

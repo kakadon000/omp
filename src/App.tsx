@@ -1,11 +1,13 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useMemo, useState } from "react";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { TitleBar } from "./components/TitleBar";
 import { Sidebar } from "./components/Sidebar";
 import { Toasts, toast } from "./components/Toast";
+import { Icon } from "./components/Icon";
 import { ContextMenuHost } from "./components/ContextMenu";
 import { ShortcutsModal, SHORTCUT_GROUPS } from "./components/ShortcutsModal";
 import { useRoute, navigate, type Route } from "./lib/router";
-import { getShellInfo, invoke, isTauri, tauriListen } from "./lib/tauri";
+import { getShellInfo, invoke, isTauri, tauriListen, APP_VERSION } from "./lib/tauri";
 import { initEngine } from "./lib/engine";
 import {
   loadSettings, saveSettings, applySettings,
@@ -46,6 +48,9 @@ export default function App() {
   const [vidPlaying, setVidPlaying] = useState(false);
   const [peek, setPeek] = useState(false);
   const [keysOpen, setKeysOpen] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
+  // latest media-entry router, shared with the drag & drop subscription
+  const openPathRef = useRef<(p: string) => void>(() => {});
 
   // boot: apply settings, ask the shell for OS info, close native splash
   useEffect(() => {
@@ -54,6 +59,17 @@ export default function App() {
     getShellInfo().then((info) => {
       if (info && info.win !== "other") document.documentElement.dataset.win = info.win;
     });
+    // v0.13.0 — a quiet weekly update nudge; fires only when a newer
+    // release actually exists, and never nags more than once a week
+    const UPD_KEY = "omp.updatecheck.at";
+    if (isTauri && Date.now() - Number(localStorage.getItem(UPD_KEY) || 0) > 7 * 24 * 3600 * 1000) {
+      localStorage.setItem(UPD_KEY, String(Date.now()));
+      void invoke<{ latest: string; url: string; newer: boolean } | null>("check_update", { current: APP_VERSION })
+        .then((r) => {
+          if (r?.newer) toast(`OMP v${r.latest} is out — Settings → About → Get v${r.latest}`, "info");
+        })
+        .catch(() => { /* offline — silence is fine for a background nudge */ });
+    }
     const t = setTimeout(() => {
       setBooted(true);
       if (isTauri) invoke("close_splash");
@@ -189,10 +205,32 @@ export default function App() {
       }
     };
     void invoke<string[]>("pending_open_paths").then((ps) => ps?.forEach(openPath));
+    openPathRef.current = openPath; // drag & drop reuses this exact routing
     let un: (() => void) | undefined;
     void tauriListen<string>("omp://open-path", openPath).then((fn) => { un = fn; });
     return () => { un?.(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // v0.13.0 — drag & drop anything: files dropped anywhere on the window take
+  // the exact same route as "Open with OMP" (video → Player, audio → Music,
+  // images → Gallery, .m3u → Live TV, .omptheme → Theme Studio, .ompj → Editor)
+  useEffect(() => {
+    if (!isTauri) return;
+    let un: (() => void) | undefined;
+    let alive = true;
+    void getCurrentWebview().onDragDropEvent((ev) => {
+      const e = ev.payload;
+      if (e.type === "drop") {
+        setDragOver(false);
+        (e.paths ?? []).forEach((p) => openPathRef.current(p));
+      } else if (e.type === "leave") {
+        setDragOver(false);
+      } else {
+        setDragOver(true); // enter / over
+      }
+    }).then((fn) => { if (alive) un = fn; else fn(); });
+    return () => { alive = false; un?.(); };
   }, []);
 
   const update = (patch: Partial<Settings>) => {
@@ -268,6 +306,15 @@ export default function App() {
       </div>
 
       {route !== "player" && <NowPlayingBar />}
+      {dragOver && (
+        <div className="drop-veil" aria-hidden="true">
+          <div className="dv-box">
+            <Icon name="download" size={30} />
+            <div className="dv-t">Drop to play</div>
+            <div className="dv-s">Video · Music · Images · Playlists (.m3u) · Themes (.omptheme)</div>
+          </div>
+        </div>
+      )}
       <Toasts />
       <ContextMenuHost />
       {keysOpen && <ShortcutsModal groups={SHORTCUT_GROUPS} onClose={() => setKeysOpen(false)} />}

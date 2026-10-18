@@ -18,6 +18,7 @@ import { loadSettings } from "./store";
 import { toast } from "../components/Toast";
 import { onMpvEvent } from "./engine";
 import { sleepTimer } from "./sleep";
+import { addWatch } from "./watchtime";
 
 export type AudioTrack = {
   id: string; // stable id: file path or station url
@@ -136,6 +137,7 @@ const el: HTMLAudioElement | null = typeof Audio !== "undefined" ? new Audio() :
 if (el) {
   el.addEventListener("timeupdate", () => {
     audioStore.set({ time: el.currentTime, dur: Number.isFinite(el.duration) ? el.duration : 0 });
+    addWatch("music", el.currentTime);
   });
   el.addEventListener("ended", () => onEnded());
   el.addEventListener("loadedmetadata", () => {
@@ -507,6 +509,7 @@ if (isTauri) {
     switch (e.kind) {
       case "tick":
         audioStore.set({ time: e.t ?? 0, dur: st.dur || 0 });
+        addWatch("music", e.t ?? 0);
         if (st.track.kind === "file" && (e.t ?? 0) > 0) {
           const now = Date.now();
           if (now - lastNote > 4000) {
