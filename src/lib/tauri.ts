@@ -142,7 +142,7 @@ export async function getShellInfo(): Promise<{
   return info ?? fallback;
 }
 
-export const APP_VERSION = "0.8.0";
+export const APP_VERSION = "0.8.1";
 
 /** Emit a Tauri event to ALL windows (no-op on the web demo). */
 export async function tauriEmit(event: string, payload: unknown): Promise<void> {

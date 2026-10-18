@@ -5,7 +5,7 @@ import type { Settings as SettingsShape } from "../lib/store";
 import { APP_VERSION, isTauri, invoke } from "../lib/tauri";
 import { navigate } from "../lib/router";
 import { engineStore, initEngine } from "../lib/engine";
-import { resetEngineProbe } from "../lib/audio";
+import { resetEngineProbe, audioDiag } from "../lib/audio";
 import { ffmpegStatus } from "../lib/editor";
 import { loadYtKey, saveYtKey, ytTestKey, loadChannels } from "../lib/online";
 import {
@@ -232,6 +232,35 @@ export function Settings({ settings, update }: { settings: SettingsShape; update
               </button>
             ))}
           </div>
+        </div>
+        <div className="row">
+          <span className="icon-btn"><Icon name="info" /></span>
+          <div className="row-main">
+            <div className="row-title">Copy diagnostics</div>
+            <div className="row-desc">Copies engine + audio session details as text — paste it in a message when something doesn't work and it pinpoints the broken leg instantly</div>
+          </div>
+          <button
+            className="btn sm"
+            onClick={async () => {
+              try {
+                const shell = await invoke<Record<string, unknown>>("shell_info").catch(() => null);
+                const d = await invoke<EngineDiag>("mpv_diag").catch(() => null);
+                const payload = {
+                  app: APP_VERSION,
+                  shell,
+                  engine: eng,
+                  engineDiag: d,
+                  audio: audioDiag(),
+                };
+                await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+                toast("Diagnostics copied — paste it to the developer", "ok");
+              } catch {
+                toast("Could not access the clipboard", "err");
+              }
+            }}
+          >
+            <Icon name="save" size={13} /> Copy
+          </button>
         </div>
         <div className="row">
           <span className="icon-btn"><Icon name="scissors" /></span>

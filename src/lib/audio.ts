@@ -218,6 +218,12 @@ async function playInner(t: AudioTrack) {
   });
   const engineOk = await ensureEngine();
   if (engineOk) {
+    // the web fallback element must never double-play once the engine owns
+    // the session (it keeps singing after "Re-test engine" revived mpv)
+    if (el && !el.paused) {
+      el.pause();
+      el.removeAttribute("src");
+    }
     let ok = await invoke<boolean>("mpv_load", { source: t.src, start: null });
     if (!ok) {
       // v0.6.2 stale-latch repair: a video session may have rebuilt or
@@ -299,8 +305,14 @@ export function playRadio(track: AudioTrack) {
 export async function toggle() {
   const st = audioStore.get();
   if (!st.track) return;
-  const engineOk = isTauri && attached;
-  if (engineOk) {
+  if (isTauri && !attached) {
+    // engine went away (crash, teardown, or a fresh boot after "Re-test
+    // engine") — tapping play must bring the CURRENT track back, not
+    // silently do nothing
+    void playInner(st.track);
+    return;
+  }
+  if (isTauri && attached) {
     await invoke("mpv_toggle_pause");
     // optimistic; the pause event settles the truth
     audioStore.set({ playing: !st.playing });
@@ -347,6 +359,28 @@ export function audioUse(): AudioState {
   return useSyncExternalStore(audioStore.sub, audioStore.get);
 }
 
+/** Diagnostics snapshot for Settings → "Copy diagnostics". Tells us exactly
+ *  which leg of the audio chain is broken when "nothing works". */
+export function audioDiag(): Record<string, unknown> {
+  const st = audioStore.get();
+  return {
+    engine: isTauri ? "libmpv" : "web element",
+    attached, // service believes the engine is attached
+    engineBroken,
+    lastEngineError: lastEngineError || null,
+    playing: st.playing,
+    track: st.track
+      ? { kind: st.track.kind, src: st.track.src.slice(0, 120), title: st.track.title }
+      : null,
+    live: st.live,
+    icy: st.icy || null,
+    time: Math.round(st.time * 10) / 10,
+    dur: st.dur,
+    queueLength: st.queue.length,
+    volume: st.volume,
+  };
+}
+
 export function next(dir: 1 | -1 = 1) {
   const st = audioStore.get();
   const q = st.queue;
@@ -368,9 +402,14 @@ export function next(dir: 1 | -1 = 1) {
 
 export function stopSession() {
   if (isTauri && attached) void invoke("mpv_stop");
+  if (skipTimer !== null) {
+    clearTimeout(skipTimer);
+    skipTimer = null;
+  }
   if (el) {
     el.pause();
     el.removeAttribute("src");
+    try { el.load(); } catch { /* releases the network for radio streams */ }
   }
   currentSrc = "";
   audioStore.set({ track: null, playing: false, time: 0, dur: 0, live: false, icy: "", queue: [], qIndex: -1 });
@@ -378,6 +417,20 @@ export function stopSession() {
 
 function onEnded() {
   const st = audioStore.get();
+  if (st.track?.kind === "radio") {
+    // a live stream never "ends" on its own — reaching END_FILE means the
+    // station dropped the connection. Auto-reconnect ONCE (throttled), then
+    // stop honestly instead of showing a fake ON AIR forever.
+    const now = Date.now();
+    if (st.track && now - lastRadioReconnect > 30000) {
+      lastRadioReconnect = now;
+      void playInner(st.track);
+    } else {
+      audioStore.set({ playing: false });
+      toast("The radio stream dropped — press play to reconnect", "info");
+    }
+    return;
+  }
   if (st.repeat && st.qIndex >= 0) {
     seek(0);
     if (!st.playing) void toggle();
@@ -398,6 +451,11 @@ type MpvEvt = { kind: string; t?: number; d?: number; paused?: boolean; path?: s
 // consecutive engine file errors — auto-skip guard so a broken track list
 // doesn't machine-gun through the whole queue
 let consecutiveErrors = 0;
+// pending auto-skip timer — CANCELLED the moment a real file loads, so a
+// transition can never both start track B and then skip away from it
+let skipTimer: number | null = null;
+// radio auto-reconnect throttle (max one per 30s per drop)
+let lastRadioReconnect = 0;
 
 if (isTauri) {
   onMpvEvent((e: MpvEvt) => {
@@ -416,6 +474,11 @@ if (isTauri) {
         break;
       case "loaded":
         consecutiveErrors = 0;
+        // a real file is playing — any pending error-skip is obsolete
+        if (skipTimer !== null) {
+          clearTimeout(skipTimer);
+          skipTimer = null;
+        }
         // ownership reconciliation: a video loadfile took the engine over
         if (e.path && e.path !== currentSrc && !e.path.endsWith(currentSrc.split(/[\\/]/).pop() || "#")) {
           audioStore.set({ track: null, playing: false, time: 0, dur: 0, live: false, icy: "" });
@@ -434,17 +497,30 @@ if (isTauri) {
         audioStore.set({ icy: e.title ?? "" });
         break;
       case "file-error":
-        // v0.6.2: the engine failed on THIS file — used to be silent (the UI
-        // just froze on "playing" with no sound). Now: honest toast + skip.
+        // the engine failed on THIS file (real decode error — ordinary Stop /
+        // track-switch transitions arrive as "file-ended" and never hit this)
         audioStore.set({ playing: false });
         toast(`Playback failed: ${e.msg || "the engine could not decode this file"}`, "err");
         consecutiveErrors++;
+        if (skipTimer !== null) clearTimeout(skipTimer);
         if (consecutiveErrors < 3 && st.queue.length > 1) {
-          setTimeout(() => next(1), 700);
+          skipTimer = window.setTimeout(() => {
+            skipTimer = null;
+            next(1);
+          }, 700);
         }
+        break;
+      case "file-ended":
+        // ordinary transition: user Stop or loadfile replace (track change).
+        // State settles via the new file's "loaded" event or via stopSession.
+        // NEVER treat this as an error and NEVER auto-skip from here.
         break;
       case "died":
         attached = false;
+        // honest state: an engine death must never leave the UI claiming
+        // playback. toggle() now rebuilds the engine with the current track
+        // when the latch is down, so "press play" always works.
+        if (st.track) audioStore.set({ playing: false });
         break;
     }
   });

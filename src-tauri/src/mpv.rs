@@ -460,10 +460,19 @@ fn pump(h: SendPtr, app: AppHandle, stop: Arc<AtomicBool>) {
                 }
                 EV_END_FILE => {
                     let reason = if data.is_null() { -1 } else { *(data as *const i32) };
-                    let payload = if reason == 0 {
-                        serde_json::json!({ "kind": "ended" })
-                    } else {
-                        serde_json::json!({ "kind": "file-error", "msg": format!("stopped ({reason})") })
+                    // mpv_end_file_reason: 0 = eof · 2 = stop · 3 = quit/replace · 4 = error.
+                    // 2 and 3 are ORDINARY transitions (the user pressed Stop,
+                    // or a loadfile replace when switching tracks). Surfacing
+                    // them as "file-error" (the v0.8.0 behaviour) made every
+                    // track change toast "Playback failed: stopped (3)" AND
+                    // armed the frontend auto-skip timer — the queue then
+                    // machine-gunned through songs 0.7s at a time. Only a
+                    // real decode error (4) may surface as an error now;
+                    // everything else is a neutral "file-ended".
+                    let payload = match reason {
+                        0 => serde_json::json!({ "kind": "ended" }),
+                        4 => serde_json::json!({ "kind": "file-error", "msg": "the engine could not decode this file" }),
+                        _ => serde_json::json!({ "kind": "file-ended", "reason": reason }),
                     };
                     let _ = app.emit("omp://mpv", payload);
                 }

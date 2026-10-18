@@ -27,6 +27,25 @@ distinctive, not into reinventing video decoding.
 - **Theme Studio** — dark/light/system, five tasteful accents, adjustable
   transparency, Reduced Effects for low-end PCs.
 
+## What's new in v0.8.1 — the audio-chain fix round
+
+- **Track-switch chaos: root cause removed.** mpv fires an end-of-file event
+  for *ordinary* transitions (pressing Stop, switching to the next song).
+  Those were surfacing as errors — every track change showed a fake
+  "Playback failed" toast and armed an auto-skip that machine-gunned through
+  the queue. Only real decode errors are errors now; Stop and track switches
+  are silent and instant.
+- **No more zombie playback.** If the engine dies mid-song the UI now says
+  so — and pressing play rebuilds the engine with the current track instead
+  of doing nothing.
+- **No more double audio.** The built-in fallback engine can no longer keep
+  playing underneath the native engine after "Re-test engine".
+- **Radio that heals.** A dropped station stream auto-reconnects once
+  (throttled) and then stops honestly — never a fake ON AIR again.
+- **Copy diagnostics** — one button in Settings → Playback copies the exact
+  engine + audio session state as text, so a bug report pinpoints the broken
+  leg instantly.
+
 ## What's new in v0.8.0 — Phase 5: online media
 
 - **Dedicated YouTube experience.** Paste any YouTube link (watch, shorts,
