@@ -79,16 +79,24 @@ jobs:
           # curl.exe (bundled with the runner) — IWR can silently land an HTML
           # error page on release-asset redirects; curl --fail cannot, and a
           # size guard + visible 7z log make any failure diagnosable
+          # Windows runners: Defender false-positives on static ffmpeg builds
+          # and quarantines the exe right after extraction (7z still reports
+          # Ok, the file just vanishes) — exclude the workspace first.
+          try { Add-MpPreference -ExclusionPath (Get-Location).Path -ErrorAction Stop } catch { Write-Host "Defender exclusion failed: $($_.Exception.Message)" }
           curl.exe -sSL --fail --retry 5 --retry-delay 5 -A omp-ci-build -o ffmpeg-bn.zip $ffurl
           $zsize = (Get-Item ffmpeg-bn.zip).Length
           Write-Host "ffmpeg zip: $([math]::Round($zsize/1MB,1)) MB"
           if ($zsize -lt 104857600) { throw "ffmpeg zip too small ($zsize bytes) — download did not yield the archive" }
-          7z x ffmpeg-bn.zip -offmpeg > 7z-ff.log
+          # flat-extract ONLY the console tools straight into resources/
+          7z e ffmpeg-bn.zip -osrc-tauri/resources -y "*/bin/ffmpeg.exe" > 7z-ff.log
           if ($LASTEXITCODE -ne 0) { Get-Content 7z-ff.log -Tail 25; throw "7z could not extract the ffmpeg zip (exit $LASTEXITCODE)" }
-          $ffexe = Get-ChildItem -Recurse -Filter ffmpeg.exe offmpeg | Select-Object -First 1
-          if (-not $ffexe) { Get-Content 7z-ff.log -Tail 25; throw "no ffmpeg.exe found in BtbN archive" }
-          Copy-Item $ffexe.FullName src-tauri/resources/ffmpeg.exe
-          Write-Host "FFmpeg: $([math]::Round($ffexe.Length/1MB,1)) MB"
+          if (-not (Test-Path src-tauri/resources/ffmpeg.exe)) {
+            Get-Content 7z-ff.log -Tail 25
+            try { Get-MpThreatDetection -ErrorAction Stop | Select-Object -Last 5 | Format-List | Out-String | Write-Host } catch {}
+            throw "ffmpeg.exe did not land in resources (likely quarantined — see detections above)"
+          }
+          $fflen = (Get-Item src-tauri/resources/ffmpeg.exe).Length
+          Write-Host "FFmpeg: $([math]::Round($fflen/1MB,1)) MB"
           Write-Host "Staged resources:"
           Get-ChildItem -Recurse src-tauri/resources | Select-Object FullName, Length
 
