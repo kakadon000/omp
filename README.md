@@ -28,6 +28,26 @@ distinctive, not into reinventing video decoding.
   you pick**, ten one-tap presets, themes that travel as `.omptheme` files,
   adjustable transparency, Reduced Effects for low-end PCs.
 
+## What's new in v0.15.2 — playback that cannot die
+
+- **The video engine joins the self-healing system.** v0.15.1 taught the
+  window to survive broken GPU drivers — but mpv still ran its D3D11 video
+  output and hardware decode straight into the same wall (the "nothing
+  plays, it crashes" reports). On any machine running in safe mode, video
+  now renders through **WARP — the D3D11 software rasterizer built into
+  every Windows install** — and hardware decoding is force-disabled. Zero
+  GPU-driver code runs during playback; if the machine can run OMP at all,
+  it can play video.
+- **Crash memory.** Every session is armed with a marker on disk. A crash,
+  hard kill or power loss leaves it behind, and the NEXT launch grades
+  itself as a rescue: software UI **and** software video, automatically —
+  plus a recovery banner explaining what happened. A clean exit retires the
+  marker, so healthy machines never see it.
+- **Copy crash report, one tap.** The recovery banner offers a button that
+  puts the shell facts and the engine log on the clipboard — no more "it
+  just crashes" with nothing to debug. (The player's rescue card keeps its
+  Copy diagnostics too.)
+
 ## What's new in v0.15.1 — the boot that cannot fail
 
 - **The window can never appear empty again.** The main window is now shown

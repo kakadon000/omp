@@ -807,12 +807,27 @@ pub fn mpv_attach(app: AppHandle, hwdec: Option<String>, show: Option<bool>) -> 
             opts.push(("ytdl", "no".into()));
         }
         if video {
-            opts.push(("vo", "gpu-next,gpu".into()));
-            // "auto-safe" refuses hwdec on non-whitelisted drivers → silent
-            // software decode → CPU burn. "auto" still falls back to SW when
-            // genuinely unsupported, but takes the GPU path far more often.
-            opts.push(("hwdec", hwdec.as_deref().unwrap_or("auto").into()));
-            opts.push(("hwdec-codecs", "all".into()));
+            // v0.15.2 — SAFE VIDEO. The webview and mpv die on the SAME broken
+            // GPU drivers: a machine that needed --disable-gpu just to draw its
+            // UI runs D3D11 video output and hardware decode into the very same
+            // wall ("nothing plays, it crashes"). Safe mode therefore renders
+            // through the D3D11 WARP software rasterizer — "Microsoft Basic
+            // Render Driver", built into EVERY Windows install, draws with the
+            // CPU and touches zero GPU-driver code — and hardware decode is
+            // force-disabled (D3D11VA/NVDEC crash independently of the VO).
+            let safe_video = crate::SAFE_VIDEO.load(Ordering::Relaxed);
+            if safe_video {
+                opts.push(("vo", "gpu,gpu-next".into()));
+                opts.push(("d3d11-adapter", "Microsoft Basic Render Driver".into()));
+                opts.push(("hwdec", "no".into()));
+            } else {
+                opts.push(("vo", "gpu-next,gpu".into()));
+                // "auto-safe" refuses hwdec on non-whitelisted drivers → silent
+                // software decode → CPU burn. "auto" still falls back to SW when
+                // genuinely unsupported, but takes the GPU path far more often.
+                opts.push(("hwdec", hwdec.as_deref().unwrap_or("auto").into()));
+                opts.push(("hwdec-codecs", "all".into()));
+            }
             // software-decode fast paths (no-ops when hardware decode engages)
             opts.push(("vd-lavc-fast", "yes".into()));
             opts.push(("vd-lavc-skiploopfilter", "nonref".into()));

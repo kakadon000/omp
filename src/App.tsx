@@ -86,6 +86,10 @@ export default function App() {
   const [peek, setPeek] = useState(false);
   const [keysOpen, setKeysOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  // v0.15.2 — the last session crashed (session.dirty was found at boot): OMP
+  // auto-recovered into maximum-compatibility mode and tells the user here,
+  // with a one-tap crash report so "it crashes" finally arrives WITH data.
+  const [crashRecov, setCrashRecov] = useState(false);
   // latest media-entry router, shared with the drag & drop subscription
   const openPathRef = useRef<(p: string) => void>(() => {});
   // v0.15.1 — safe graphics mode (Rust launches the webview with --disable-gpu
@@ -128,7 +132,7 @@ export default function App() {
     const handshake = () => {
       hs++;
       if (isTauri) {
-        invoke<{ safe?: boolean }>("ui_ready")
+        invoke<{ safe?: boolean; crashed?: boolean }>("ui_ready")
           .then((r) => {
             // window is up — the pre-React paint watch may start now
             (window as unknown as { __ompStartPaintWatch?: () => void }).__ompStartPaintWatch?.();
@@ -137,6 +141,9 @@ export default function App() {
               document.documentElement.classList.add("reduced");
               toast("Safe graphics mode — GPU rendering was unstable on this machine", "info");
             }
+            // v0.15.2 — the previous session died without a goodbye. OMP is
+            // already running software UI + software video this launch.
+            if (r?.crashed) setCrashRecov(true);
           })
           .catch(() => { if (hs < 40) setTimeout(handshake, 350); });
       }
@@ -333,6 +340,23 @@ export default function App() {
   const toggleEffects = () =>
     update({ effects: document.documentElement.classList.contains("reduced") ? "full" : "reduced" });
 
+  // v0.15.2 — one tap: shell facts + engine log into the clipboard, so a
+  // "it crashes" report finally arrives with something actionable in it
+  const copyCrashReport = async () => {
+    try {
+      const [shell, diag] = await Promise.all([
+        invoke<Record<string, unknown>>("shell_info").catch(() => null),
+        invoke<Record<string, unknown>>("mpv_diag").catch(() => null),
+      ]);
+      await navigator.clipboard.writeText(
+        JSON.stringify({ kind: "omp-crash-recovery", version: APP_VERSION, at: new Date().toISOString(), shell, engine: diag }, null, 2),
+      );
+      toast("Crash report copied — paste it to the developer", "ok");
+    } catch {
+      toast("Could not copy the crash report", "err");
+    }
+  };
+
   const hideSidebar = route === "player" && vidPlaying && settings.autoHideSidebar !== false;
 
   const screen = useMemo(() => {
@@ -392,6 +416,23 @@ export default function App() {
       </div>
 
       {route !== "player" && <NowPlayingBar />}
+      {crashRecov && (
+        <div className="crash-banner" role="status">
+          <span className="cb-ico"><Icon name="restore" size={20} /></span>
+          <div className="cb-txt">
+            <div className="cb-t">OMP didn&apos;t close cleanly last time</div>
+            <div className="cb-s">This launch runs in maximum-compatibility mode — software UI and software video, so it should survive anything. If it crashed while playing something, send the report.</div>
+          </div>
+          <div className="cb-row">
+            <button className="btn accent" onClick={() => { void copyCrashReport(); }}>
+              <Icon name="info" size={14} /> Copy crash report
+            </button>
+            <button className="btn" onClick={() => setCrashRecov(false)}>
+              <Icon name="check" size={14} /> Got it
+            </button>
+          </div>
+        </div>
+      )}
       {dragOver && (
         <div className="drop-veil" aria-hidden="true">
           <div className="dv-box">

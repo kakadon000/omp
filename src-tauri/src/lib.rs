@@ -147,6 +147,21 @@ static SAFE_MODE: AtomicBool = AtomicBool::new(false);
 /// machines silently graduate to normal GPU rendering on launch #2.
 static SAFE_STICKY: AtomicBool = AtomicBool::new(false);
 
+/// v0.15.2 — safe VIDEO mode. The webview and mpv break on the SAME broken
+/// GPU drivers: a machine that needed --disable-gpu just to draw its UI runs
+/// the mpv video output (D3D11 + hardware decode) into the very same wall —
+/// the "nothing plays, it crashes" reports. Safe video renders through the
+/// D3D11 WARP software rasterizer (built into every Windows install, draws
+/// with the CPU, zero GPU-driver code) and force-disables hardware decode.
+/// Derived at boot from the same evidence that drives SAFE_MODE.
+pub(crate) static SAFE_VIDEO: AtomicBool = AtomicBool::new(false);
+
+/// v0.15.2 — the last session did NOT exit cleanly (crash, hard kill, power
+/// loss). Detected from the session.dirty marker a previous launch left
+/// behind; grades THIS launch as a rescue for both the webview and the video
+/// engine, and surfaces a recovery banner with a one-tap crash report.
+static CRASHED_LAST: AtomicBool = AtomicBool::new(false);
+
 /// v0.15.1 — the ONE place that surfaces the main window during boot.
 /// Idempotent and polite: focus is only taken on the FIRST show, retries
 /// never yank the window back in front of the user.
@@ -197,7 +212,7 @@ fn ui_ready(app: tauri::AppHandle) -> serde_json::Value {
             }
         }
     }
-    serde_json::json!({ "safe": safe })
+    serde_json::json!({ "safe": safe, "crashed": CRASHED_LAST.load(Ordering::Relaxed) })
 }
 
 /// v0.15.1 — PAINT VERIFICATION. The handshake proves the page's JavaScript
@@ -975,17 +990,29 @@ pub fn run() {
             let booted_once = has_marker("ui.ok");
             let rescued = has_marker("ui.failsafe");
             let safe_sticky = has_marker("ui.safe");
+            // v0.15.2 — crash memory: session.dirty means the previous session
+            // never said goodbye (the process died mid-playback, was hard-killed
+            // or the machine lost power). That is the strongest broken-machine
+            // signal we get — grade this launch as a rescue for BOTH engines.
+            let crashed_last = has_marker("session.dirty");
+            CRASHED_LAST.store(crashed_last, Ordering::Relaxed);
             // Safe graphics when: the last launch needed the failsafe, OR a
             // previous safe launch succeeded (sticky), OR the UI has NEVER
             // come up on this machine (fresh install → first launch probes in
             // software, which paints reliably on every GPU; a healthy machine
             // exits safe mode automatically on its second launch).
-            if rescued || safe_sticky || !booted_once {
+            if rescued || safe_sticky || !booted_once || crashed_last {
                 SAFE_MODE.store(true, Ordering::Relaxed);
             }
             // only a PROVEN-broken machine keeps safe mode after a success —
             // a probe launch (fresh install) graduates back to the GPU path
-            SAFE_STICKY.store(rescued || safe_sticky, Ordering::Relaxed);
+            SAFE_STICKY.store(rescued || safe_sticky || crashed_last, Ordering::Relaxed);
+            // v0.15.2 — the video engine follows the webview: if this launch
+            // runs software UI, it runs software video too. Same wall, same fix.
+            SAFE_VIDEO.store(
+                SAFE_MODE.load(Ordering::Relaxed) || SAFE_STICKY.load(Ordering::Relaxed),
+                Ordering::Relaxed,
+            );
             // consume the one-shot rescue marker (ui_ready re-decides it)
             if let Some(d) = &data_dir {
                 let _ = std::fs::remove_file(d.join("ui.failsafe"));
@@ -1084,14 +1111,27 @@ pub fn run() {
                     Err(e) => eprintln!("OMP library: db open failed: {e}"),
                 }
             }
+            // v0.15.2 — arm crash memory. If the process dies without reaching
+            // the clean-exit handler, this marker survives on disk and the NEXT
+            // launch boots in maximum-compatibility mode (software UI + software
+            // video) with a recovery banner.
+            if let Some(d) = &data_dir {
+                let _ = std::fs::write(d.join("session.dirty"), b"1");
+            }
             Ok(())
         })
         .build(tauri::generate_context!())
         .expect("error while building OMP")
-        .run(|_app, event| {
+        .run(|app, event| {
             // release the native engine + video surface cleanly
             if let tauri::RunEvent::Exit = event {
                 mpv::shutdown_all();
+                // v0.15.2 — clean goodbye: retire the crash-memory marker so
+                // the next launch is graded normally. A crash never reaches
+                // this line, leaving the marker behind to trigger the rescue.
+                if let Ok(d) = app.path().app_data_dir() {
+                    let _ = std::fs::remove_file(d.join("session.dirty"));
+                }
             }
         });
 }

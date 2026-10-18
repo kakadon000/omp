@@ -1073,6 +1073,31 @@ html.reduced .w-vis i { animation: none; height: 9px; }
 /* sleep-timer popover in the now-playing bar — narrower than the default menu */
 .np-sleep { min-width: 168px; left: auto; right: 0; }
 
+/* ===== v0.15.2 — crash-recovery banner ================================== */
+
+/* floating glass card, bottom-center above the now-playing bar */
+.crash-banner {
+  position: fixed; left: 50%; bottom: 92px; transform: translateX(-50%);
+  z-index: 260; width: min(560px, calc(100vw - 48px));
+  display: flex; align-items: flex-start; gap: 14px;
+  padding: 16px 18px; border-radius: var(--radius-lg);
+  border: 1px solid var(--stroke); background: var(--surface-2);
+  box-shadow: var(--shadow); color: var(--text);
+  animation: homeUp 0.3s ease both;
+}
+.crash-banner .cb-ico {
+  flex: 0 0 auto; display: grid; place-items: center;
+  width: 40px; height: 40px; border-radius: 99px;
+  background: var(--accent-dim); color: var(--accent);
+}
+.crash-banner .cb-txt { flex: 1 1 auto; min-width: 0; }
+.crash-banner .cb-t { font-family: var(--font-display); font-size: 14px; font-weight: 600; }
+.crash-banner .cb-s { font-size: 12px; color: var(--text-2); margin-top: 3px; line-height: 1.45; }
+.crash-banner .cb-row { display: flex; flex-direction: column; gap: 8px; flex: 0 0 auto; }
+
+/* sleep-timer popover in the now-playing bar — narrower than the default menu */
+.np-sleep { min-width: 168px; left: auto; right: 0; }
+
 /* ===== v0.14.0 — downloader + editor upgrades ============================ */
 
 /* editor: built-in preview error note (codec WebView can't decode) */
