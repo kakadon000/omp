@@ -43,6 +43,23 @@ const P: Record<string, React.ReactNode> = {
   film: <><rect x="3.5" y="4.5" width="17" height="15" rx="2" /><path d="M8 4.5v15M16 4.5v15M3.5 9.5H8M3.5 14.5H8M16 9.5h4.5M16 14.5h4.5" /></>,
   clock: <><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2.2" /></>,
   star: <path d="m12 3.8 2.5 5.1 5.6.8-4 4 .9 5.6-5-2.7-5 2.7.9-5.6-4-4 5.6-.8L12 3.8Z" />,
+  trophy: (
+    <>
+      <path d="M8 4h8v4.5a4 4 0 0 1-8 0V4Z" />
+      <path d="M8 5H5v1.5A2.5 2.5 0 0 0 7.5 9H8" />
+      <path d="M16 5h3v1.5A2.5 2.5 0 0 1 16.5 9H16" />
+      <path d="M12 12.5V16" />
+      <path d="M9.5 19c0-1.7 1.1-3 2.5-3s2.5 1.3 2.5 3" />
+      <path d="M8 19h8" />
+    </>
+  ),
+  history: (
+    <>
+      <path d="M4 5.5v4h4" />
+      <path d="M4.9 9.5A8 8 0 1 1 4 12.5" />
+      <path d="M12 8v4.5l3 1.8" />
+    </>
+  ),
   pen: <path d="M4.5 19.5 5.3 16 16.7 4.6a1.7 1.7 0 0 1 2.4 0l.3.3a1.7 1.7 0 0 1 0 2.4L7.9 18.7l-3.4.8Z" />,
   crop: <path d="M7 3.5V17h13.5M3.5 7H17v13.5" />,
   square: <rect x="5" y="5" width="14" height="14" rx="1.5" />,

@@ -780,3 +780,59 @@ html.reduced .w-vis i { animation: none; height: 9px; }
 }
 .playing-bars::after { animation-delay: -0.45s; animation-duration: 0.7s; }
 @keyframes eq { 0%, 100% { height: 4px; } 50% { height: 11px; } }
+
+/* ---------------- v0.9.1 — Online tabs, favorites, repair center ---------------- */
+.online-tabs {
+  display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px;
+  padding: 4px; border-radius: var(--radius-lg);
+  background: var(--surface-2); border: 1px solid var(--stroke);
+}
+.online-tab {
+  display: inline-flex; align-items: center; gap: 7px;
+  height: 36px; padding: 0 16px; border-radius: calc(var(--radius-lg) - 4px);
+  border: none; background: transparent; color: var(--text-2);
+  font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+  transition: background .15s ease, color .15s ease;
+}
+.online-tab:hover { color: var(--text-1); background: var(--surface-3); }
+.online-tab.on { background: var(--accent); color: #fff; }
+.engine-banner { border-left: 3px solid var(--warn, #ffb454); }
+
+.fav-btn {
+  position: absolute; top: 4px; left: 4px;
+  width: 24px; height: 24px; border-radius: 7px;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; cursor: pointer; color: #fff;
+  background: rgba(0, 0, 0, 0.55); opacity: 0;
+  transition: opacity .15s ease, color .15s ease, background .15s ease;
+}
+.yt-result:hover .fav-btn, .fav-btn.on { opacity: 1; }
+.fav-btn.on { color: var(--warn, #ffb454); background: rgba(0, 0, 0, 0.72); }
+
+/* Engine & tools — per-component health grid */
+.health-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 8px; margin-top: 10px;
+}
+.health-item {
+  padding: 10px 12px; border-radius: var(--radius);
+  background: var(--surface-2); border: 1px solid var(--stroke);
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+}
+.health-head { display: flex; align-items: center; gap: 7px; width: 100%; }
+.health-dot { width: 8px; height: 8px; border-radius: 99px; flex: none; }
+.health-dot.ok { background: var(--ok, #35c46f); box-shadow: 0 0 6px var(--ok, #35c46f); }
+.health-dot.bad { background: var(--err, #ff6b6b); box-shadow: 0 0 6px var(--err, #ff6b6b); }
+.health-name { font-size: 12.5px; font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.health-path {
+  font-size: 10.5px; color: var(--text-3); word-break: break-all;
+  font-family: var(--mono, monospace); line-height: 1.5;
+}
+.repair-bar {
+  height: 6px; border-radius: 99px; overflow: hidden;
+  background: var(--surface-3); border: 1px solid var(--stroke);
+}
+.repair-bar > i {
+  display: block; height: 100%; border-radius: 99px;
+  background: var(--accent); transition: width .35s ease;
+}

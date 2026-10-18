@@ -68,6 +68,7 @@ mod mpv;
 
 mod library;
 mod editor;
+mod health;
 
 /// Detect the Windows build number from the OS plugin (e.g. "10.0.22631").
 #[cfg(windows)]
@@ -373,6 +374,8 @@ fn open_url(url: String) -> bool {
 }
 
 /// v0.9.0 — locate the BUNDLED yt-dlp extractor (exe dir / resources layout).
+/// v0.9.1 — also accepts the self-repaired copy in %APPDATA%\app.omp.player\engine
+/// (the repair center downloads there when the install dir is not writable).
 /// Also shared with mpv.rs: when present, the engine gets native playback of
 /// YouTube and 1000+ other sites through mpv's ytdl hook.
 pub(crate) fn ytdlp_path() -> Option<std::path::PathBuf> {
@@ -384,6 +387,12 @@ pub(crate) fn ytdlp_path() -> Option<std::path::PathBuf> {
                     return Some(p);
                 }
             }
+        }
+    }
+    if let Some(ed) = health::engine_dir(None) {
+        let p = ed.join("yt-dlp.exe");
+        if p.is_file() {
+            return Some(p);
         }
     }
     None
@@ -537,6 +546,127 @@ fn online_yt_search(query: String, max: Option<u32>) -> Result<String, String> {
     serde_json::to_string(&out).map_err(|e| e.to_string())
 }
 
+/// v0.9.1 — KEYLESS YouTube search with zero bundled processes: the same
+/// innerTube endpoint the YouTube web app itself uses. This is the in-built
+/// YouTube API the UI calls first — it works even when antivirus removed
+/// yt-dlp.exe, it spawns nothing, and it never needs a Data API key.
+/// Result rows are shaped EXACTLY like online_yt_search so the frontend maps
+/// both with one function.
+#[tauri::command]
+fn online_innertube_search(query: String, max: Option<u32>) -> Result<String, String> {
+    let q = query.trim();
+    if q.is_empty() {
+        return Err("empty query".into());
+    }
+    let n = max.unwrap_or(20).clamp(1, 40) as usize;
+    let body = serde_json::json!({
+        "context": {
+            "client": {
+                "clientName": "WEB",
+                "clientVersion": "2.20240726.00.00",
+                "hl": "en",
+                "gl": "US"
+            }
+        },
+        "query": q
+    });
+    let resp = ureq::post("https://www.youtube.com/youtubei/v1/search?prettyPrint=false")
+        .set("Content-Type", "application/json")
+        .set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+        .set("Accept-Language", "en-US,en;q=0.9")
+        .timeout(std::time::Duration::from_secs(20))
+        .send_string(&body.to_string())
+        .map_err(|e| format!("YouTube search failed: {e}"))?;
+    let data: serde_json::Value = resp.into_json().map_err(|e| e.to_string())?;
+
+    // layout-proof extraction: walk the whole response and collect every
+    // videoRenderer object (search layouts change; the payload key does not)
+    fn collect(node: &serde_json::Value, out: &mut Vec<serde_json::Value>) {
+        match node {
+            serde_json::Value::Object(map) => {
+                if let Some(vr) = map.get("videoRenderer") {
+                    out.push(vr.clone());
+                }
+                for v in map.values() {
+                    collect(v, out);
+                }
+            }
+            serde_json::Value::Array(arr) => {
+                for v in arr {
+                    collect(v, out);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut renderers: Vec<serde_json::Value> = Vec::new();
+    collect(&data, &mut renderers);
+
+    fn runs_text(v: &serde_json::Value) -> String {
+        if let Some(s) = v["simpleText"].as_str() {
+            return s.to_string();
+        }
+        v["runs"]
+            .as_array()
+            .map(|rs| {
+                rs.iter()
+                    .map(|r| r["text"].as_str().unwrap_or("").to_string())
+                    .collect::<String>()
+            })
+            .unwrap_or_default()
+    }
+    fn text_to_secs(s: &str) -> f64 {
+        let mut secs = 0f64;
+        for part in s.split(':') {
+            secs = secs * 60.0 + part.trim().parse::<f64>().unwrap_or(0.0);
+        }
+        secs
+    }
+    fn text_to_views(s: &str) -> u64 {
+        let digits: String = s.chars().filter(|c| c.is_ascii_digit()).collect();
+        digits.parse().unwrap_or(0)
+    }
+
+    let mut out: Vec<serde_json::Value> = Vec::new();
+    for vr in renderers.iter().take(n) {
+        let id = vr["videoId"].as_str().unwrap_or("").to_string();
+        if id.is_empty() {
+            continue;
+        }
+        let title = runs_text(&vr["title"]);
+        if title.is_empty() {
+            continue;
+        }
+        let channel = {
+            let c = runs_text(&vr["ownerText"]);
+            let c = if c.is_empty() { runs_text(&vr["longBylineText"]) } else { c };
+            if c.is_empty() { runs_text(&vr["shortBylineText"]) } else { c }
+        };
+        let len_text = runs_text(&vr["lengthText"]);
+        let views_text = runs_text(&vr["viewCountText"]);
+        let badges = vr["badges"].as_array().map(|a| a.len()).unwrap_or(0);
+        let live = len_text.is_empty()
+            && (badges > 0
+                || views_text.to_ascii_lowercase().contains("watching"));
+        let duration = if live { 0.0 } else { text_to_secs(&len_text) };
+        out.push(serde_json::json!({
+            "id": id,
+            "title": title,
+            "thumb": format!("https://i.ytimg.com/vi/{id}/hqdefault.jpg"),
+            "duration": duration,
+            "views": text_to_views(&views_text),
+            "channel": channel,
+            "published": runs_text(&vr["publishedTimeText"]),
+            "live": live,
+            "url": format!("https://www.youtube.com/watch?v={id}"),
+        }));
+    }
+    if out.is_empty() {
+        return Err("YouTube returned no results (network or consent wall?)".into());
+    }
+    serde_json::to_string(&out).map_err(|e| e.to_string())
+}
+
 pub fn run() {
     tauri::Builder::default()
         // MUST be the first plugin: catches second launches (double-clicking
@@ -620,6 +750,10 @@ pub fn run() {
             open_url,
             online_ytdlp_status,
             online_yt_search,
+            online_innertube_search,
+            health::omp_health,
+            health::omp_repair_download,
+            health::omp_open_install_folder,
             mpv::mpv_diag
         ])
         .on_window_event(|window, event| {

@@ -383,14 +383,13 @@ export async function ytTestKey(key: string): Promise<{ ok: boolean; msg: string
 /*  Search WITHOUT any API key: the shell runs the bundled extractor's  */
 /*  "ytsearchN:" mode and the results are shaped exactly like the Data  */
 /*  API path, so the UI renders both identically. Slower than the API   */
-/*  (one process spawn per search) but keyless and quota-free — this    */
-/*  is the out-of-the-box path.                                        */
+/*  (one process spawn per search) but keyless and quota-free.          */
 
 import { invoke } from "./tauri";
 
-export async function ytdlpSearch(query: string, max = 20): Promise<YtResult[]> {
-  const raw = (await invoke<string | null>("online_yt_search", { query, max })) ?? "";
-  if (!raw.trim()) throw new Error("The extractor returned nothing");
+/** Shared mapper: online_yt_search + online_innertube_search both emit this
+ *  JSON row shape (numeric duration/views), so one function shapes both. */
+function mapSearchJson(raw: string): YtResult[] {
   const arr = JSON.parse(raw) as Array<Record<string, unknown>>;
   return arr.map((v) => {
     const secs = Number(v.duration || 0);
@@ -420,10 +419,25 @@ export async function ytdlpSearch(query: string, max = 20): Promise<YtResult[]> 
       thumb: String(v.thumb || ytThumb(String(v.id || ""))),
       duration,
       views,
-      published: "",
+      published: String(v.published || ""),
       live,
     };
   });
+}
+
+export async function ytdlpSearch(query: string, max = 20): Promise<YtResult[]> {
+  const raw = (await invoke<string | null>("online_yt_search", { query, max })) ?? "";
+  if (!raw.trim()) throw new Error("The extractor returned nothing");
+  return mapSearchJson(raw);
+}
+
+/** v0.9.1 — the in-built YouTube search: the same innerTube interface the
+ *  YouTube site itself uses, called from the Rust shell. No API key, no
+ *  bundled process — survives antivirus removing yt-dlp.exe. */
+export async function innertubeSearch(query: string, max = 20): Promise<YtResult[]> {
+  const raw = (await invoke<string | null>("online_innertube_search", { query, max })) ?? "";
+  if (!raw.trim()) throw new Error("YouTube returned nothing");
+  return mapSearchJson(raw);
 }
 
 /** Extractor availability (drives Settings + the Online hint bars). */
@@ -440,6 +454,74 @@ export async function ytdlpStatus(): Promise<{ available: boolean; path: string 
 
 export function isStreamUrl(u: string): boolean {
   return isStreamLine(u);
+}
+
+/* ---------------------- search history (v0.9.1) --------------------- */
+
+const HIST_KEY = "omp.online.searchhistory";
+
+export function loadSearchHistory(): string[] {
+  try {
+    const raw = localStorage.getItem(HIST_KEY);
+    const list = raw ? (JSON.parse(raw) as string[]) : [];
+    return Array.isArray(list) ? list.slice(0, 8) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function pushSearchHistory(q: string) {
+  const t = q.trim();
+  if (t.length < 2) return;
+  const list = loadSearchHistory().filter((h) => h.toLowerCase() !== t.toLowerCase());
+  list.unshift(t);
+  try {
+    localStorage.setItem(HIST_KEY, JSON.stringify(list.slice(0, 8)));
+  } catch {
+    /* noop */
+  }
+}
+
+export function clearSearchHistory() {
+  try {
+    localStorage.removeItem(HIST_KEY);
+  } catch {
+    /* noop */
+  }
+}
+
+/* ------------------------- favorites (v0.9.1) ------------------------ */
+
+const FAV_KEY = "omp.online.favs";
+
+export function loadFavs(): YtResult[] {
+  try {
+    const raw = localStorage.getItem(FAV_KEY);
+    const list = raw ? (JSON.parse(raw) as YtResult[]) : [];
+    return Array.isArray(list) ? list : [];
+  } catch {
+    return [];
+  }
+}
+
+/** returns true when the item is now a favorite */
+export function toggleFav(r: YtResult): boolean {
+  const list = loadFavs();
+  const at = list.findIndex((f) => f.id === r.id);
+  let nowFav: boolean;
+  if (at >= 0) {
+    list.splice(at, 1);
+    nowFav = false;
+  } else {
+    list.unshift({ ...r });
+    nowFav = true;
+  }
+  try {
+    localStorage.setItem(FAV_KEY, JSON.stringify(list.slice(0, 60)));
+  } catch {
+    /* noop */
+  }
+  return nowFav;
 }
 
 /** Built-in starter channels — free, publicly announced official streams. */
@@ -462,4 +544,25 @@ export const BUILTIN_TV: IptvChannel[] = [
     tvgId: "",
     source: "Built-in",
   },
+];
+
+/** v0.9.1 — Sports tab one-tap searches (all keyless through the in-built
+ *  YouTube search). Ordered so the most-watched sports come first. */
+export const SPORTS_PRESETS: string[] = [
+  "Football highlights today",
+  "Premier League highlights",
+  "Cricket highlights today",
+  "NBA highlights today",
+  "F1 race highlights",
+  "Tennis highlights today",
+  "UFC highlights",
+  "WWE highlights",
+  "Hockey highlights today",
+  "Baseball highlights today",
+  "Live cricket stream",
+  "Live football stream",
+  "Formula 1 qualifying highlights",
+  "Boxing highlights",
+  "Badminton highlights",
+  "Kabaddi highlights",
 ];

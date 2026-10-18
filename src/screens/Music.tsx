@@ -9,6 +9,7 @@ import { toast } from "../components/Toast";
 import { openContextMenu } from "../components/ContextMenu";
 import { TRACKS } from "../lib/data";
 import { invoke, isTauri } from "../lib/tauri";
+import { engineStore } from "../lib/engine";
 import {
   audioStore, audioUse, playTracks, playRadio, toggle, next, seek,
   setShuffle, setRepeat, trackArt, libItemToTrack, loadStations, addStation,
@@ -71,6 +72,7 @@ const fallbackTracks = (): AudioTrack[] =>
 
 export function Music({ query }: { query: string }) {
   const st = audioUse();
+  const engineInfo = useSyncExternalStore(engineStore.sub, engineStore.get);
   const libItems = useMusicLibrary(query);
   const { pls, refresh: refreshPls } = usePlaylists();
   const [stations, setStations] = useState<Station[]>(() => loadStations());
@@ -146,6 +148,17 @@ export function Music({ query }: { query: string }) {
 
   return (
     <div style={{ paddingBottom: current ? 96 : 0 }}>
+      {/* v0.9.1 — honest state when the native engine is unavailable: the
+          WebView audio fallback takes over and the user deserves to know */}
+      {isTauri && !engineInfo.available && (
+        <div className="card panel" style={{ padding: "9px 14px", marginBottom: 14, display: "flex", gap: 10, alignItems: "center", borderColor: "var(--warn, #ffb454)" }}>
+          <Icon name="alert" size={14} />
+          <span style={{ flex: 1, fontSize: 12.5 }}>
+            Native engine not active — music plays with the built-in audio engine (slightly lower quality).
+          </span>
+          <button className="btn sm" onClick={() => navigate("settings")}>Fix</button>
+        </div>
+      )}
       <div className="music-grid">
         <div>
           {/* ---------------- albums ---------------- */}

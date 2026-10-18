@@ -32,11 +32,18 @@ static PNG_SEQ: AtomicU64 = AtomicU64::new(0);
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// Locate the bundled ffmpeg.exe (same resolution ladder as mpv-2.dll).
+/// v0.9.1: also accepts the self-repaired copy in the app-data engine dir.
 fn ffmpeg_path() -> Option<std::path::PathBuf> {
     let exe = std::env::current_exe().ok()?;
     let dir = exe.parent()?;
     for rel in ["ffmpeg.exe", r"resources\ffmpeg.exe", r"..\resources\ffmpeg.exe"] {
         let p = dir.join(rel);
+        if p.is_file() {
+            return Some(p);
+        }
+    }
+    if let Some(ed) = crate::health::engine_dir(None) {
+        let p = ed.join("ffmpeg.exe");
         if p.is_file() {
             return Some(p);
         }

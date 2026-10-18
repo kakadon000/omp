@@ -27,6 +27,40 @@ distinctive, not into reinventing video decoding.
 - **Theme Studio** — dark/light/system, five tasteful accents, adjustable
   transparency, Reduced Effects for low-end PCs.
 
+## What's new in v0.9.1 — self-repair, the in-built YouTube API, and tabs
+
+- **Engine & tools repair center (Settings → Playback).** The v0.9.0 bundle was
+  verified byte-perfect — the installer ships a valid 206-export `mpv-2.dll`,
+  `yt-dlp.exe` and `ffmpeg.exe` — so a dead engine on a user machine means
+  something machine-side (antivirus quarantine, stale install). Until now OMP
+  could only *say* that. Now it can *fix* it: the new repair center lists every
+  bundled component with its exact path and size, shows the loader's attempt
+  trail ("not present in this install" vs "load refused by Windows"), and can
+  **re-download the official binaries with one click** — yt-dlp from the
+  yt-dlp project, the engine from the official mpv-winbuild builds (downloaded,
+  extracted in-app, re-probed) — into a writable location (install resources
+  for per-user installs, else app data). No admin, no reinstall.
+- **The in-built YouTube API got better: zero processes, zero keys.** Search
+  now runs through the same innerTube interface the YouTube site itself uses,
+  straight from the Rust shell — no API key, no bundled extractor needed,
+  nothing for antivirus to delete. The keyless chain is: in-built search →
+  bundled extractor → your own Data API key (Settings → Online). With a healthy
+  engine, results and pasted links still play natively with hardware decode.
+- **The Online screen finally has the obvious tab bar:** **Video · Sports ·
+  Music · Live TV · Radio**. Sports is a first-class tab — one-tap presets for
+  football, cricket, NBA, F1, tennis, UFC, WWE and more, opening with live
+  highlights on the spot.
+- **More on the Online screen:** search history chips (tap to re-run),
+  favorites — star any result, replay it from the Favorites row — and an
+  honest engine banner with a one-click fix when native playback is unavailable.
+- **Music is honest about fallback:** when the native engine is inactive, the
+  Music screen says the built-in audio engine is playing and points to the
+  repair center instead of failing silently.
+- **Diagnostics that name absences:** the loader previously logged nothing for
+  a missing DLL file, which read as "loader did nothing". Now every candidate
+  is logged: present-but-refused, foreign-copy-rejected, or simply gone
+  (antivirus?) — and "Copy diagnostics" carries all of it.
+
 ## What's new in v0.9.0 — the engine that always starts + built-in YouTube
 
 - **The engine loader is now defensive end to end.** On some machines a

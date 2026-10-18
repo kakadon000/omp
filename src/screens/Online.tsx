@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Icon } from "../components/Icon";
 import { toast } from "../components/Toast";
 import { ONLINE_VIDEOS } from "../lib/data";
@@ -15,40 +15,52 @@ import {
   parseM3U, loadChannels, importChannels, removeChannelsBySource, clearChannels,
   channelGroups, channelSources, loadRecent, pushRecent,
   parseYouTubeInput, ytEmbedUrl, ytThumb, loadYtKey, ytSearch, ytTestKey, YtError,
-  ytdlpSearch, ytdlpStatus,
+  ytdlpSearch, ytdlpStatus, innertubeSearch,
+  loadSearchHistory, pushSearchHistory, clearSearchHistory,
+  loadFavs, toggleFav, SPORTS_PRESETS,
   BUILTIN_TV,
   type IptvChannel, type YtResult,
 } from "../lib/online";
 
-type Tab = "youtube" | "music" | "tv" | "radio";
+type Tab = "video" | "sports" | "music" | "tv" | "radio";
+
+const TABS: { id: Tab; label: string; icon: string }[] = [
+  { id: "video", label: "Video", icon: "play" },
+  { id: "sports", label: "Sports", icon: "trophy" },
+  { id: "music", label: "Music", icon: "music" },
+  { id: "tv", label: "Live TV", icon: "cast" },
+  { id: "radio", label: "Radio", icon: "radio" },
+];
 
 export function Online({ query }: { query: string }) {
-  const [tab, setTab] = useState<Tab>("youtube");
+  const [tab, setTab] = useState<Tab>("video");
   const q = query.toLowerCase().trim();
+  const engine = useSyncExternalStore(engineStore.sub, engineStore.get);
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 18, flexWrap: "wrap" }}>
-        <div className="seg">
-          <button className={tab === "youtube" ? "on" : ""} onClick={() => setTab("youtube")}>
-            <Icon name="play" size={13} /> YouTube
+      {/* v0.9.1 — the tab bar the user asked for: one obvious row, one tap each */}
+      <div className="online-tabs">
+        {TABS.map((t) => (
+          <button key={t.id} className={`online-tab ${tab === t.id ? "on" : ""}`} onClick={() => setTab(t.id)}>
+            <Icon name={t.icon} size={15} /> {t.label}
           </button>
-          <button className={tab === "music" ? "on" : ""} onClick={() => setTab("music")}>
-            <Icon name="music" size={13} /> Music
-          </button>
-          <button className={tab === "tv" ? "on" : ""} onClick={() => setTab("tv")}>
-            <Icon name="cast" size={13} /> Live TV
-          </button>
-          <button className={tab === "radio" ? "on" : ""} onClick={() => setTab("radio")}>
-            <Icon name="radio" size={13} /> Radio
-          </button>
-        </div>
-        <span style={{ flex: 1 }} />
-        <span className="chip"><Icon name="check" /> No OMP ads. Ever.</span>
-        <span className="chip badge" style={{ height: 28 }}>YouTube ads remain per Google policy</span>
+        ))}
       </div>
 
-      {tab === "youtube" && <YouTubeTab q={q} />}
+      {isTauri && !engine.available && (
+        <div className="card panel engine-banner" style={{ padding: "10px 14px", marginBottom: 14, display: "flex", gap: 10, alignItems: "center", borderColor: "var(--warn, #ffb454)" }}>
+          <Icon name="alert" size={15} />
+          <span style={{ flex: 1, fontSize: 12.5 }}>
+            Native engine inactive — streams play in WebView mode (heavier on the CPU, fewer formats).
+            Settings → Engine &amp; tools can repair it in one click.
+          </span>
+          <button className="btn sm" onClick={() => navigate("settings")}>Fix engine</button>
+        </div>
+      )}
+
+      {tab === "video" && <YouTubeTab q={q} />}
+      {tab === "sports" && <YouTubeTab q={q} sports />}
       {tab === "music" && <YouTubeTab q={q} music />}
       {tab === "tv" && <TvTab q={q} />}
       {tab === "radio" && <RadioTab />}
@@ -57,10 +69,13 @@ export function Online({ query }: { query: string }) {
 }
 
 /* ==================================================================== */
-/*  YouTube — paste a link, or search with your own API key              */
+/*  Video / Sports / Music — paste a link, or search with ZERO setup     */
+/*  (in-built YouTube search → bundled extractor → your own API key)     */
 /* ==================================================================== */
 
-function YouTubeTab({ q, music }: { q: string; music?: boolean }) {
+const SPORTS_DEFAULT = "sports highlights today";
+
+function YouTubeTab({ q, music, sports }: { q: string; music?: boolean; sports?: boolean }) {
   const [key, setKey] = useState(loadYtKey());
   useEffect(() => {
     const fn = () => setKey(loadYtKey());
@@ -68,7 +83,7 @@ function YouTubeTab({ q, music }: { q: string; music?: boolean }) {
     return () => window.removeEventListener("focus", fn);
   }, []);
 
-  // v0.9.0 — built-in extractor presence (drives keyless search + native play)
+  // v0.9.0 — built-in extractor presence (drives native play + search fallback)
   const [ytdlpOk, setYtdlpOk] = useState<boolean | null>(null);
   useEffect(() => {
     void ytdlpStatus().then((s) => setYtdlpOk(s.available));
@@ -84,6 +99,11 @@ function YouTubeTab({ q, music }: { q: string; music?: boolean }) {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const [playing, setPlaying] = useState<{ videoId: string; listId?: string; title: string } | null>(null);
+
+  // v0.9.1 — search history + favorites
+  const [history, setHistory] = useState<string[]>(() => loadSearchHistory());
+  const [favs, setFavs] = useState<YtResult[]>(() => loadFavs());
+  const autoRan = useRef(false);
 
   // global search box query routes into the search field
   useEffect(() => {
@@ -113,19 +133,42 @@ function YouTubeTab({ q, music }: { q: string; music?: boolean }) {
       return;
     }
     setBusy(true); setErr(""); setResults(null);
+    pushSearchHistory(t);
+    setHistory(loadSearchHistory());
     try {
       if (key) {
         const rs = await ytSearch(key, t, { music });
         setResults(rs);
         if (!rs.length) setErr("No results.");
+      } else if (!isTauri) {
+        setErr("Search runs in the desktop app (in-built YouTube search or your own API key).");
+        return;
       } else {
-        // v0.9.0: NO KEY → the built-in extractor searches instead
-        if (!isTauri) { setErr("Search runs in the desktop app (built-in extractor or your own API key)."); return; }
-        if (ytdlpOk === false) {
-          setErr("Search needs a YouTube Data API key (Settings → Online) — or reinstall OMP to get the built-in extractor back.");
+        // v0.9.1 — ZERO-SETUP search: the in-built YouTube interface first
+        // (no key, no processes), then the bundled extractor as fallback.
+        let rs: YtResult[] | null = null;
+        let innerErr = "";
+        try {
+          rs = await innertubeSearch(t, 24);
+        } catch (e) {
+          innerErr = e instanceof Error ? e.message : String(e);
+        }
+        if (!rs && ytdlpOk !== false) {
+          try {
+            rs = await ytdlpSearch(t, 24);
+            if (rs.length) toast("Searched with the bundled extractor (in-built search failed)", "info");
+          } catch {
+            /* fall through to the honest error */
+          }
+        }
+        if (!rs) {
+          setErr(
+            ytdlpOk === false
+              ? `Search failed: ${innerErr} — and the bundled extractor is missing. Settings → Engine & tools can repair it.`
+              : innerErr || "Search failed — network error.",
+          );
           return;
         }
-        const rs = await ytdlpSearch(t, 20);
         setResults(rs);
         if (!rs.length) setErr("No results.");
       }
@@ -133,7 +176,7 @@ function YouTubeTab({ q, music }: { q: string; music?: boolean }) {
       const msg = e instanceof Error ? e.message : String(e);
       setErr(
         e instanceof YtError
-          ? `${msg} (Tip: searches also work keyless through the built-in extractor — clear the key in Settings → Online.)`
+          ? `${msg} (Tip: clear the key in Settings → Online to use the free in-built search.)`
           : msg || "Search failed — network error.",
       );
     } finally {
@@ -152,6 +195,22 @@ function YouTubeTab({ q, music }: { q: string; music?: boolean }) {
     else window.open(url, "_blank");
   };
 
+  // Sports tab opens with content on the spot — no dead first screen
+  useEffect(() => {
+    if (sports && !autoRan.current && isTauri && !key) {
+      autoRan.current = true;
+      void runSearch(SPORTS_DEFAULT);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sports]);
+
+  const submitInput = () => {
+    if (input.includes("youtube") || input.includes("youtu.be") || /^[a-zA-Z0-9_-]{11}$/.test(input.trim())) playParsed(input);
+    else runSearch(input);
+  };
+
+  const heading = sports ? "Sports" : music ? "Music" : "Video";
+
   return (
     <div>
       {/* input row */}
@@ -159,12 +218,18 @@ function YouTubeTab({ q, music }: { q: string; music?: boolean }) {
         <input
           className="input"
           style={{ flex: 2, minWidth: 260 }}
-          placeholder={music ? "Paste a YouTube music link, video id, or search…" : "Paste a YouTube link (watch / shorts / youtu.be / playlist)…"}
+          placeholder={
+            sports
+              ? "Search sports — highlights, live matches, replays…"
+              : music
+                ? "Paste a YouTube music link, video id, or search…"
+                : "Paste a YouTube link (watch / shorts / youtu.be / playlist)…"
+          }
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") { if (input.includes("youtube") || input.includes("youtu.be") || /^[a-zA-Z0-9_-]{11}$/.test(input.trim())) playParsed(input); else runSearch(input); } }}
+          onKeyDown={(e) => { if (e.key === "Enter") submitInput(); }}
         />
-        <button className="btn" onClick={() => { if (input.includes("youtube") || input.includes("youtu.be") || /^[a-zA-Z0-9_-]{11}$/.test(input.trim())) playParsed(input); else runSearch(input); }}>
+        <button className="btn" onClick={submitInput}>
           <Icon name="play" size={14} /> Play
         </button>
         <button className="btn ghost" onClick={() => runSearch(searchQ || input)}>
@@ -178,12 +243,54 @@ function YouTubeTab({ q, music }: { q: string; music?: boolean }) {
       </div>
       <input
         className="input"
-        style={{ width: "100%", marginBottom: 14 }}
-        placeholder={key ? "Search YouTube…" : "Search (needs a free API key — Settings → Online)"}
+        style={{ width: "100%", marginBottom: 10 }}
+        placeholder={key ? `Search YouTube ${heading.toLowerCase()}…` : "Search — free, built in, no key needed"}
         value={searchQ}
         onChange={(e) => setSearchQ(e.target.value)}
         onKeyDown={(e) => { if (e.key === "Enter") runSearch(searchQ); }}
       />
+
+      {/* search history chips */}
+      {history.length > 0 && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 14, alignItems: "center" }}>
+          <Icon name="history" size={13} style={{ color: "var(--text-3)" }} />
+          {history.map((h) => (
+            <button
+              key={h}
+              className="chip"
+              style={{ height: 26, cursor: "pointer" }}
+              title={`Search again: ${h}`}
+              onClick={() => { setSearchQ(h); void runSearch(h); }}
+            >
+              {h}
+            </button>
+          ))}
+          <button
+            className="chip badge"
+            style={{ height: 26 }}
+            title="Clear search history"
+            onClick={() => { clearSearchHistory(); setHistory([]); }}
+          >
+            <Icon name="trash" size={11} /> Clear
+          </button>
+        </div>
+      )}
+
+      {/* sports one-tap presets */}
+      {sports && (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
+          {SPORTS_PRESETS.map((p) => (
+            <button
+              key={p}
+              className={`chip ${searchQ === p ? "badge" : ""}`}
+              style={{ height: 28, cursor: "pointer" }}
+              onClick={() => { setSearchQ(p); void runSearch(p); }}
+            >
+              <Icon name="trophy" size={12} /> {p}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* theater player */}
       {playing && (
@@ -203,6 +310,11 @@ function YouTubeTab({ q, music }: { q: string; music?: boolean }) {
               <Icon name="close" size={14} />
             </button>
           </div>
+          {!canNative && !engine.available && (
+            <div style={{ fontSize: 11.5, color: "var(--warn, #ffb454)", padding: "0 4px 8px" }}>
+              WebView playback uses noticeably more CPU — Settings → Engine &amp; tools → Repair enables the native player.
+            </div>
+          )}
           <div className="yt-theater">
             <iframe
               key={`${playing.videoId}|${playing.listId || ""}`}
@@ -226,42 +338,83 @@ function YouTubeTab({ q, music }: { q: string; music?: boolean }) {
       {busy && <div className="section-label">Searching…</div>}
       {results && results.length > 0 && (
         <>
-          <div className="section-label" style={{ marginBottom: 10 }}>{music ? "Music results" : "Results"}</div>
+          <div className="section-label" style={{ marginBottom: 10 }}>
+            {sports ? "Sports results" : music ? "Music results" : "Results"}
+          </div>
           <div className="yt-result-grid">
             {results.map((r) => (
-              <div key={r.id} className="card hover yt-result" onClick={() => playDecision(r.id, undefined, r.title)} title={canNative ? "Play in OMP's native player" : "Play in the embedded player"}>
-                <div className="yt-result-thumb">
-                  <img src={r.thumb} alt="" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.opacity = "0"; }} />
-                  <span className={`yt-dur ${r.live ? "live" : ""}`}>{r.duration}</span>
-                </div>
-                <div className="yt-result-body">
-                  <div className="yt-result-title" title={r.title}>{r.title}</div>
-                  <div className="yt-result-meta">{r.channel}</div>
-                  <div className="yt-result-meta">{r.views}{r.views && r.published ? " · " : ""}{r.published}</div>
-                </div>
-              </div>
+              <ResultCard key={r.id} r={r} favs={favs} onFav={() => setFavs(loadFavs())} onPlay={() => playDecision(r.id, undefined, r.title)} canNative={canNative} />
             ))}
           </div>
         </>
       )}
 
-      {/* curated open collection — always works, no key */}
-      <div className="section-label" style={{ marginTop: results ? 26 : 8 }}>
-        {music ? "Open music films" : "Open collection — Blender films, no key needed"}
-      </div>
-      <div className="yt-grid">
-        {ONLINE_VIDEOS.filter((v) => !q || v.name.toLowerCase().includes(q)).map((v) => (
-          <div key={v.id} className="card hover yt-card" onClick={() => playDecision(v.yt, undefined, v.name)}>
-            <div className="yt-thumb">
-              <img src={ytThumb(v.yt)} alt={v.name} loading="lazy" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
-              <span className="icon-btn" style={{ position: "relative", background: "rgba(18,20,26,0.65)", color: "#fff", borderRadius: 99, width: 46, height: 46, backdropFilter: "blur(8px)" }}>
-                <Icon name="play" size={20} />
-              </span>
-            </div>
-            <div className="yt-name">{v.name}</div>
-            <div className="yt-src">{v.src} · YouTube</div>
+      {/* favorites — one tap re-play, kept in order added */}
+      {favs.length > 0 && (
+        <>
+          <div className="section-label" style={{ marginTop: results ? 26 : 8, marginBottom: 10 }}>
+            <Icon name="star" size={13} /> Favorites
           </div>
-        ))}
+          <div className="yt-result-grid">
+            {favs.slice(0, 8).map((r) => (
+              <ResultCard key={`fav-${r.id}`} r={r} favs={favs} onFav={() => setFavs(loadFavs())} onPlay={() => playDecision(r.id, undefined, r.title)} canNative={canNative} />
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* curated open collection — always works, no key (hidden on sports) */}
+      {!sports && (
+        <>
+          <div className="section-label" style={{ marginTop: results || favs.length ? 26 : 8 }}>
+            {music ? "Open music films" : "Open collection — Blender films, no key needed"}
+          </div>
+          <div className="yt-grid">
+            {ONLINE_VIDEOS.filter((v) => !q || v.name.toLowerCase().includes(q)).map((v) => (
+              <div key={v.id} className="card hover yt-card" onClick={() => playDecision(v.yt, undefined, v.name)}>
+                <div className="yt-thumb">
+                  <img src={ytThumb(v.yt)} alt={v.name} loading="lazy" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
+                  <span className="icon-btn" style={{ position: "relative", background: "rgba(18,20,26,0.65)", color: "#fff", borderRadius: 99, width: 46, height: 46, backdropFilter: "blur(8px)" }}>
+                    <Icon name="play" size={20} />
+                  </span>
+                </div>
+                <div className="yt-name">{v.name}</div>
+                <div className="yt-src">{v.src} · YouTube</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** One YouTube result card — shared by results + favorites (v0.9.1). */
+function ResultCard({ r, favs, onFav, onPlay, canNative }: {
+  r: YtResult;
+  favs: YtResult[];
+  onFav: () => void;
+  onPlay: () => void;
+  canNative: boolean;
+}) {
+  const isFav = useMemo(() => favs.some((f) => f.id === r.id), [favs, r.id]);
+  return (
+    <div className="card hover yt-result" onClick={onPlay} title={canNative ? "Play in OMP's native player" : "Play in the embedded player"}>
+      <div className="yt-result-thumb">
+        <img src={r.thumb} alt="" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.opacity = "0"; }} />
+        <span className={`yt-dur ${r.live ? "live" : ""}`}>{r.live ? "LIVE" : r.duration}</span>
+        <button
+          className={`fav-btn ${isFav ? "on" : ""}`}
+          title={isFav ? "Remove from favorites" : "Add to favorites"}
+          onClick={(e) => { e.stopPropagation(); toggleFav(r); onFav(); }}
+        >
+          <Icon name="star" size={13} />
+        </button>
+      </div>
+      <div className="yt-result-body">
+        <div className="yt-result-title" title={r.title}>{r.title}</div>
+        <div className="yt-result-meta">{r.channel}</div>
+        <div className="yt-result-meta">{r.views}{r.views && r.published ? " · " : ""}{r.published}</div>
       </div>
     </div>
   );

@@ -200,6 +200,20 @@ pub(crate) struct LoadReport {
     pub last_error: u32,
 }
 
+/// v0.9.1 — the most recent loader trail, readable from omp_health so the
+/// Settings repair center can show WHY the engine did not load.
+static LAST_ATTEMPTS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+pub(crate) fn last_attempts() -> Vec<String> {
+    LAST_ATTEMPTS.lock().map(|g| g.clone()).unwrap_or_default()
+}
+
+fn record_attempts(rep: &LoadReport) {
+    if let Ok(mut g) = LAST_ATTEMPTS.lock() {
+        *g = rep.attempts.clone();
+    }
+}
+
 unsafe fn load_api_logged() -> LoadReport {
     let mut rep = LoadReport {
         api: None,
@@ -215,6 +229,11 @@ unsafe fn load_api_logged() -> LoadReport {
             candidates.push(dir.join("mpv-2.dll").to_string_lossy().into_owned());
         }
     }
+    // v0.9.1 — the self-repaired copy (Settings repair center downloads the
+    // official build here when the install dir is not writable)
+    if let Some(ed) = crate::health::engine_dir(None) {
+        candidates.push(ed.join("mpv-2.dll").to_string_lossy().into_owned());
+    }
     // then the generic search (dev trees, PATH copies)
     candidates.push("mpv-2.dll".to_string());
     candidates.push("libmpv-2.dll".to_string());
@@ -224,6 +243,12 @@ unsafe fn load_api_logged() -> LoadReport {
     for spec in candidates {
         let is_path = spec.contains('\\') || spec.contains('/');
         if is_path && !std::path::Path::new(&spec).is_file() {
+            // v0.9.1 — SILENCE HERE WAS A BUG: a missing bundled DLL produced
+            // zero trail lines, which read as "loader did nothing". Name the
+            // absence so the repair card can tell "file gone (antivirus?)"
+            // apart from "file present but refused".
+            rep.attempts
+                .push(format!("{spec} → not present in this install"));
             continue; // this install layout doesn't exist on this machine
         }
         let wide = to_wide(&spec);
@@ -302,6 +327,7 @@ unsafe fn load_api_logged() -> LoadReport {
             std::mem::transmute(sym("mpv_client_api_version").unwrap_unchecked());
         rep.attempts.push(format!("{spec} → OK, mpv API verified"));
         rep.dll_path = spec;
+        record_attempts(&rep);
         rep.api = Some(MpvApi {
             create,
             initialize,
@@ -320,7 +346,8 @@ unsafe fn load_api_logged() -> LoadReport {
         return rep;
     }
     rep.attempts
-        .push("no candidate engine DLL could be verified — reinstall OMP so the bundled engine lands in resources\\".into());
+        .push("no candidate engine DLL could be verified — open Settings → Engine & tools and hit Repair, or reinstall OMP".into());
+    record_attempts(&rep);
     rep
 }
 

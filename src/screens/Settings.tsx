@@ -2,7 +2,7 @@ import { useState, useEffect, useSyncExternalStore } from "react";
 import { Icon } from "../components/Icon";
 import { toast } from "../components/Toast";
 import type { Settings as SettingsShape } from "../lib/store";
-import { APP_VERSION, isTauri, invoke } from "../lib/tauri";
+import { APP_VERSION, isTauri, invoke, tauriListen } from "../lib/tauri";
 import { navigate } from "../lib/router";
 import { engineStore, initEngine } from "../lib/engine";
 import { resetEngineProbe, audioDiag } from "../lib/audio";
@@ -22,6 +22,30 @@ type EngineDiag = {
   version: string | null;
   attempts?: string[];
 };
+
+/* v0.9.1 — Engine & tools repair center types */
+type CompHealth = {
+  name: string;
+  label: string;
+  present: boolean;
+  path: string;
+  size: number;
+  origin: string;
+};
+type OmpHealth = {
+  version: string;
+  install_dir: string;
+  install_writable: boolean;
+  repair_dir: string;
+  engine_loads: boolean;
+  engine_attempts: string[];
+  components: CompHealth[];
+};
+type RepairEvt = { kind: string; phase: string; received: number; total: number; msg: string };
+
+function mb(n: number): string {
+  return n > 0 ? `${(n / 1048576).toFixed(1)} MB` : "";
+}
 
 /** Human-readable hints for the Win32 LoadLibrary error codes users hit. */
 function loadErrorHint(code: number): string {
@@ -66,6 +90,14 @@ export function Settings({ settings, update }: { settings: SettingsShape; update
     return () => window.removeEventListener("omp://channels-changed", fn as EventListener);
   }, []);
   const [retesting, setRetesting] = useState(false);
+  // v0.9.1 — Engine & tools: exact per-component health + one-click repair
+  const [health, setHealth] = useState<OmpHealth | null>(null);
+  const [repair, setRepair] = useState<RepairEvt | null>(null);
+
+  const refreshHealth = () => {
+    if (!isTauri) return;
+    void invoke<OmpHealth>("omp_health").then(setHealth).catch(() => setHealth(null));
+  };
 
   // live SQLite stats + scan status
   useEffect(() => {
@@ -76,6 +108,29 @@ export function Settings({ settings, update }: { settings: SettingsShape; update
     });
   }, []);
 
+  // repair progress events (engine DLL is a ~120 MB download)
+  useEffect(() => {
+    if (!isTauri) return;
+    let un1: (() => void) | undefined;
+    let un2: (() => void) | undefined;
+    void tauriListen<RepairEvt>("omp://repair", (e) => {
+      setRepair(e);
+      if (e.phase === "done") {
+        refreshHealth();
+        void invoke<boolean>("mpv_retest").then(() => initEngine(settings.engine));
+        setTimeout(() => setRepair(null), 4000);
+      } else if (e.phase === "error") {
+        setTimeout(() => setRepair(null), 6000);
+      }
+    }).then((un) => { un1 = un; });
+    void tauriListen<boolean>("omp://repair-refresh", () => {
+      refreshHealth();
+      void invoke<boolean>("mpv_retest").then(() => initEngine(settings.engine));
+    }).then((un) => { un2 = un; });
+    return () => { un1?.(); un2?.(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // v0.6.1: real engine diagnostics — what used to be a vague "missing"
   // feeling in this screen is now an exact, visible engine status
   useEffect(() => {
@@ -83,6 +138,7 @@ export function Settings({ settings, update }: { settings: SettingsShape; update
     void invoke<EngineDiag>("mpv_diag").then((d) => setDiag(d));
     void ffmpegStatus().then(setFfFound);
     void ytdlpStatus().then(setYtdlp);
+    refreshHealth();
   }, [eng.available]);
 
   const scanning = !!stats?.scanning;
@@ -107,13 +163,27 @@ export function Settings({ settings, update }: { settings: SettingsShape; update
       await initEngine(settings.engine);
       const d = await invoke<EngineDiag>("mpv_diag");
       setDiag(d);
+      refreshHealth();
       toast(
-        ok ? "Engine loads now — try playing music again" : "Engine still unavailable — see the message below",
+        ok ? "Engine loads now — try playing music again" : "Engine still unavailable — see Engine & tools below",
         ok ? "ok" : "err"
       );
     } finally {
       setRetesting(false);
     }
+  };
+
+  // v0.9.1 — one-click self-repair: re-download the OFFICIAL component into a
+  // writable location (install resources for per-user installs, else app data)
+  const startRepair = (kind: "ytdlp" | "engine") => {
+    if (repair && repair.phase !== "done" && repair.phase !== "error") {
+      toast("A repair is already running", "info");
+      return;
+    }
+    setRepair({ kind, phase: "connecting", received: 0, total: 0, msg: "starting…" });
+    void invoke<boolean>("omp_repair_download", { kind }).then((ok) => {
+      if (!ok) setTimeout(() => setRepair(null), 1500);
+    });
   };
 
   const rescan = async () => {
@@ -195,27 +265,95 @@ export function Settings({ settings, update }: { settings: SettingsShape; update
       </div>
 
       <div className="section-label">Playback</div>
-      {isTauri && !eng.available && (
-        <div className="card engine-warn">
-          <span className="icon-btn" style={{ color: "var(--warn, #ffb454)" }}><Icon name="alert" /></span>
-          <div className="row-main">
-            <div className="row-title">Native mpv engine not active</div>
-            <div className="row-desc">
-              {diag && diag.load_error
-                ? `The bundled engine DLL exists but Windows refused to load it (error ${diag.load_error}): ${loadErrorHint(diag.load_error)}. Music still plays via the built-in audio engine.`
-                : diag && diag.dll_path
-                  ? "The engine DLL was found but did not initialise — reinstalling usually fixes this. Music still plays via the built-in audio engine."
-                  : "This install can't find the bundled engine. Music still plays via the built-in audio engine; videos fall back to WebView2 (higher CPU, fewer formats). Re-run the latest installer — it closes OMP and repairs locked files automatically."}
-              {diag && diag.attempts && diag.attempts.length > 0 && (
-                <span style={{ display: "block", marginTop: 6, fontFamily: "var(--mono, monospace)", fontSize: 11, color: "var(--text-3)" }}>
-                  {diag.attempts.join(" · ")}
-                </span>
-              )}
+      {isTauri && (
+        <div className={`card ${health && (!health.engine_loads || health.components.some((c) => !c.present)) ? "engine-warn" : ""}`}>
+          <div className="row">
+            <span className="icon-btn"><Icon name="gear" /></span>
+            <div className="row-main">
+              <div className="row-title">Engine &amp; tools</div>
+              <div className="row-desc">
+                {health === null
+                  ? "Checking the installed components…"
+                  : health.engine_loads && health.components.every((c) => c.present)
+                    ? `Everything is in place — native engine running, extractor and exporter bundled${health.install_writable ? "" : " · install dir is read-only, repairs land in app data"}`
+                    : "Something on this machine is missing or blocked — each item below can be repaired with one click, no reinstall needed"}
+              </div>
             </div>
+            <button className="btn sm" disabled={retesting} onClick={() => void retestEngine()}>
+              <Icon name="rotate" size={14} /> {retesting ? "Testing…" : "Re-test"}
+            </button>
           </div>
-          <button className="btn sm" disabled={retesting} onClick={() => void retestEngine()}>
-            <Icon name="rotate" size={14} /> {retesting ? "Testing…" : "Re-test engine"}
-          </button>
+
+          <div className="health-grid">
+            {(health?.components ?? []).map((c) => (
+              <div key={c.name} className="health-item">
+                <div className="health-head">
+                  <span className={`health-dot ${c.present ? "ok" : "bad"}`} />
+                  <span className="health-name">{c.label}</span>
+                  <span className={`chip ${c.present ? "" : "kf-chip"}`} style={c.present ? { color: "var(--accent)" } : { color: "var(--warn, #ffb454)" }}>
+                    {c.present ? c.origin : "missing"}
+                  </span>
+                </div>
+                <div className="health-path" title={c.path}>
+                  {c.present ? `${mb(c.size)}${c.size ? " · " : ""}${c.path}` : `expected at ${c.path}`}
+                </div>
+                {(c.name === "ytdlp" || c.name === "engine") && (
+                  <button className="btn ghost sm" style={{ marginTop: 6 }} disabled={!!repair && repair.phase !== "done" && repair.phase !== "error"} onClick={() => startRepair(c.name as "ytdlp" | "engine")}>
+                    <Icon name="download" size={12} />
+                    {c.present ? "Re-download (repair)" : "Repair now"}
+                  </button>
+                )}
+              </div>
+            ))}
+            {health === null && (
+              <div className="health-item"><div className="health-path">…</div></div>
+            )}
+          </div>
+
+          {repair && repair.phase !== "done" && repair.phase !== "error" && (
+            <div style={{ marginTop: 10 }}>
+              <div style={{ fontSize: 11.5, color: "var(--text-2)", marginBottom: 5 }}>
+                {repair.kind === "engine" ? "Repairing the mpv engine" : "Repairing the YouTube extractor"} — {repair.phase}
+                {repair.total > 0 ? ` · ${mb(repair.received)} / ${mb(repair.total)}` : ""}
+              </div>
+              <div className="repair-bar"><i style={{ width: repair.total > 0 ? `${Math.round((repair.received / repair.total) * 100)}%` : "12%" }} /></div>
+            </div>
+          )}
+          {repair && repair.phase === "done" && (
+            <div style={{ marginTop: 10, fontSize: 12, color: "var(--ok)" }}>Repaired — {repair.msg}</div>
+          )}
+          {repair && repair.phase === "error" && (
+            <div style={{ marginTop: 10, fontSize: 12, color: "var(--err, #ff6b6b)" }}>Repair failed — {repair.msg}</div>
+          )}
+
+          {health && !health.engine_loads && health.engine_attempts.length > 0 && (
+            <div className="row" style={{ borderTop: "1px solid var(--stroke)", marginTop: 10, paddingTop: 10 }}>
+              <div className="row-main">
+                <div className="row-title">Why the engine is not active</div>
+                <div className="row-desc" style={{ fontFamily: "var(--mono, monospace)", fontSize: 11, wordBreak: "break-all" }}>
+                  {health.engine_attempts.join(" · ")}
+                </div>
+                {diag && diag.load_error > 0 && (
+                  <div className="row-desc" style={{ marginTop: 4 }}>
+                    Windows error {diag.load_error}: {loadErrorHint(diag.load_error)}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div className="row" style={{ borderTop: "1px solid var(--stroke)", marginTop: 8, paddingTop: 8 }}>
+            <span className="icon-btn"><Icon name="folder" /></span>
+            <div className="row-main">
+              <div className="row-title">Install folder</div>
+              <div className="row-desc" style={{ wordBreak: "break-all" }}>
+                {health ? health.install_dir : "—"}{health && !health.install_writable ? " (read-only — repairs go to app data)" : ""}
+              </div>
+            </div>
+            <button className="btn sm" onClick={() => { void invoke("omp_open_install_folder"); }}>
+              <Icon name="external" size={13} /> Open
+            </button>
+          </div>
         </div>
       )}
       <div className="card">
