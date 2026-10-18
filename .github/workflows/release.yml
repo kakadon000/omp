@@ -76,12 +76,19 @@ jobs:
           # (BtbN stable n8.1 GPL build — libx264 / libvpx-vp9 / libopus all in;
           #  the old "release-latest" asset name was retired upstream → 404)
           $ffurl = "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-n8.1-latest-win64-gpl-8.1.zip"
-          Invoke-WebRequest -Uri $ffurl -OutFile ffmpeg-bn.zip -Headers @{ "User-Agent" = "omp-ci-build" }
-          7z x ffmpeg-bn.zip -offmpeg | Out-Null
+          # curl.exe (bundled with the runner) — IWR can silently land an HTML
+          # error page on release-asset redirects; curl --fail cannot, and a
+          # size guard + visible 7z log make any failure diagnosable
+          curl.exe -sSL --fail --retry 5 --retry-delay 5 -A omp-ci-build -o ffmpeg-bn.zip $ffurl
+          $zsize = (Get-Item ffmpeg-bn.zip).Length
+          Write-Host "ffmpeg zip: $([math]::Round($zsize/1MB,1)) MB"
+          if ($zsize -lt 104857600) { throw "ffmpeg zip too small ($zsize bytes) — download did not yield the archive" }
+          7z x ffmpeg-bn.zip -offmpeg > 7z-ff.log
+          if ($LASTEXITCODE -ne 0) { Get-Content 7z-ff.log -Tail 25; throw "7z could not extract the ffmpeg zip (exit $LASTEXITCODE)" }
           $ffexe = Get-ChildItem -Recurse -Filter ffmpeg.exe offmpeg | Select-Object -First 1
-          if (-not $ffexe) { throw "no ffmpeg.exe found in BtbN archive" }
+          if (-not $ffexe) { Get-Content 7z-ff.log -Tail 25; throw "no ffmpeg.exe found in BtbN archive" }
           Copy-Item $ffexe.FullName src-tauri/resources/ffmpeg.exe
-          Write-Host "FFmpeg: $(ath]::Round($ffexe.Length/1MB,1)) MB"
+          Write-Host "FFmpeg: $([math]::Round($ffexe.Length/1MB,1)) MB"
           Write-Host "Staged resources:"
           Get-ChildItem -Recurse src-tauri/resources | Select-Object FullName, Length
 
