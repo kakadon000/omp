@@ -27,6 +27,91 @@
     </script>
   </head>
   <body>
+    <!-- v0.15.1 — STATIC BOOT HERO. Pure HTML/CSS: paints the moment the
+         webview can rasterize ANYTHING — even if the React bundle is slow to
+         parse or crashes. React removes this node on mount. Without it, a
+         slow webview showed the see-through blur window ("wtf is this"). -->
+    <div id="omp-hero" style="position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;background:linear-gradient(160deg,#0b0e14,#11151f 55%,#0d1117)">
+      <div style="width:280px;padding:30px 28px 24px;border-radius:22px;text-align:center;background:linear-gradient(165deg,rgba(255,255,255,.07),rgba(255,255,255,.02));border:1px solid rgba(255,255,255,.12);box-shadow:0 24px 70px rgba(0,0,0,.55)">
+        <img src="./icon-512.png" alt="OMP" width="52" height="52" style="border-radius:13px;display:block;margin:0 auto" />
+        <div style="font:600 21px/1.2 system-ui,'Segoe UI',sans-serif;color:#f2f5f9;margin-top:12px">OMP</div>
+        <div style="font:400 12px/1.4 system-ui,'Segoe UI',sans-serif;color:#93a2b6;margin-top:4px">Every Format. One Player. Open to All.</div>
+        <div style="margin:18px auto 0;width:130px;height:4px;border-radius:99px;background:rgba(255,255,255,.12);overflow:hidden">
+          <i style="display:block;height:100%;width:42%;border-radius:99px;background:#4f8cff;animation:ompheroslide 1.1s ease-in-out infinite alternate"></i>
+        </div>
+        <div id="omp-hero-msg" style="font:400 11.5px/1.45 system-ui,'Segoe UI',sans-serif;color:#8fa1b7;margin-top:12px;min-height:17px">opening…</div>
+        <button id="omp-hero-reload" onclick="location.reload()" style="display:none;margin-top:10px;padding:7px 18px;border-radius:99px;border:1px solid rgba(255,255,255,.18);background:rgba(79,140,255,.16);color:#dbe6f5;font:500 12.5px system-ui,'Segoe UI',sans-serif;cursor:pointer">Reload OMP</button>
+      </div>
+    </div>
+    <style>@keyframes ompheroslide{from{transform:translateX(-72%)}to{transform:translateX(190%)}}</style>
+    <script>
+      // v0.15.1 — BOOT WATCHDOG (pre-React, survives a crashed bundle).
+      (function () {
+        // surface bundle crashes instead of dying silently
+        window.addEventListener("error", function (e) {
+          if (document.documentElement.dataset.react) return;
+          var el = document.getElementById("omp-hero-msg");
+          if (el) el.textContent = "Startup hiccup — a reload usually fixes it";
+        }, true);
+        // the window shows itself only after the shell answers ui_ready —
+        // ping early and keep pinging: the IPC bridge may lag on slow disks
+        var tries = 0, done = false;
+        function ping() {
+          if (done) return;
+          tries++;
+          try {
+            var internals = window.__TAURI_INTERNALS__;
+            if (internals && internals.invoke) {
+              var r = internals.invoke("ui_ready");
+              if (r && typeof r.then === "function") {
+                r.then(function () { done = true; startPaintWatch(); }, retry);
+                return;
+              }
+              done = true; startPaintWatch(); return;
+            }
+          } catch (err) { /* bridge not ready yet */ }
+          retry();
+        }
+        function retry() { if (tries < 60) setTimeout(ping, 350); }
+        setTimeout(ping, 120);
+        // PAINT WATCH — the handshake proves JS is alive, not that frames
+        // reach the screen. It starts ONLY once the window is actually shown
+        // (handshake answered): if the compositor never delivers a single
+        // requestAnimationFrame within 5s of the window being up, tell the
+        // shell so the NEXT launch runs software rendering (safe graphics).
+        function startPaintWatch() {
+          if (document.documentElement.dataset.paintchecked) return;
+          document.documentElement.dataset.paintchecked = "1";
+          requestAnimationFrame(function () {
+            document.documentElement.dataset.paintok = "1";
+            report("ui_paint_ok");
+          });
+          setTimeout(function () {
+            if (!document.documentElement.dataset.paintok) {
+              report("ui_paint_suspect");
+              var m = document.getElementById("omp-hero-msg");
+              if (m) m.textContent = "Graphics check failed — reopen OMP once and it fixes itself";
+            }
+          }, 5000);
+        }
+        function report(cmd) {
+          try {
+            var internals = window.__TAURI_INTERNALS__;
+            if (internals && internals.invoke) internals.invoke(cmd);
+          } catch (e) { /* nothing more we can do */ }
+        }
+        // React's handshake can win the race — it starts the watch too
+        window.__ompStartPaintWatch = startPaintWatch;
+        // if React never arrives, say so and hand the user a working button
+        setTimeout(function () {
+          if (document.documentElement.dataset.react || done) return;
+          var m = document.getElementById("omp-hero-msg");
+          var b = document.getElementById("omp-hero-reload");
+          if (m) m.textContent = "Still opening — slower than it should be";
+          if (b) b.style.display = "inline-block";
+        }, 9000);
+      })();
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

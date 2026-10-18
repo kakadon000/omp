@@ -124,18 +124,105 @@ pub(crate) fn set_playback_effects(app: &AppHandle, playing: bool) {
 #[cfg(not(windows))]
 pub(crate) fn set_playback_effects(_app: &AppHandle, _playing: bool) {}
 
+/// v0.15.1 — set once the main window has actually been shown this launch
+/// (via ui_ready / close_splash / a user-driven show). The boot failsafe
+/// only rescues launches where this never happened.
+static BOOT_SHOWN: AtomicBool = AtomicBool::new(false);
+
+/// v0.15.1 — safe graphics mode. Some machines (broken GPU drivers, broken
+/// WebView2 updates) never paint a first webview frame: the window shows the
+/// DWM material with NOTHING on it — the "see-through window" reports. Those
+/// launches are relaunched with --disable-gpu (software webview rendering),
+/// which paints reliably everywhere. Decided from markers at setup:
+///   ui.ok       the UI proved itself at least once (any successful launch)
+///   ui.failsafe the last launch needed the 8s failsafe (one-shot, consumed)
+///   ui.safe     sticky safe-graphics mode (software rendering worked here)
+static SAFE_MODE: AtomicBool = AtomicBool::new(false);
+
+/// v0.15.1 — WHY this launch runs in safe mode. Rescue-graded (the last
+/// launch failed and had to be force-shown, or a previous safe launch was
+/// kept) means the machine is genuinely broken → ui_ready makes safe mode
+/// STICKY. Probe-graded (fresh install / UI never proved itself) means the
+/// machine is UNKNOWN → ui_ready does NOT stick safe mode, so healthy
+/// machines silently graduate to normal GPU rendering on launch #2.
+static SAFE_STICKY: AtomicBool = AtomicBool::new(false);
+
+/// v0.15.1 — the ONE place that surfaces the main window during boot.
+/// Idempotent and polite: focus is only taken on the FIRST show, retries
+/// never yank the window back in front of the user.
+fn show_main(app: &AppHandle) {
+    if let Some(m) = app.get_webview_window("main") {
+        let first = !BOOT_SHOWN.load(Ordering::Relaxed);
+        let _ = m.show();
+        if first {
+            let _ = m.set_focus();
+        }
+    }
+    BOOT_SHOWN.store(true, Ordering::Relaxed);
+}
+
 #[tauri::command]
 fn close_splash(app: tauri::AppHandle) {
     if let Some(splash) = app.get_webview_window("splashscreen") {
         let _ = splash.close();
     }
-    if let Some(main) = app.get_webview_window("main") {
-        let _ = main.show();
-        let _ = main.set_focus();
-    }
+    show_main(&app);
     // v0.15.0 — the UI answered: from now on every launch skips the splash.
     if let Ok(d) = app.path().app_data_dir() {
         let _ = std::fs::write(d.join("ui.ok"), b"ok");
+    }
+}
+
+/// v0.15.1 — THE BOOT HANDSHAKE. The webview calls this (with retries, from
+/// an inline pre-React script AND from React) as soon as something real has
+/// rendered. The main window only becomes visible here — showing it earlier
+/// is what painted the see-through blur window on slow/broken machines.
+/// Idempotent: every retry just re-shows an already-shown window.
+#[tauri::command]
+fn ui_ready(app: tauri::AppHandle) -> serde_json::Value {
+    show_main(&app);
+    let safe = SAFE_MODE.load(Ordering::Relaxed);
+    if let Ok(d) = app.path().app_data_dir() {
+        let _ = std::fs::write(d.join("ui.ok"), b"ok");
+        // this launch answered — a pending one-shot rescue flag is obsolete
+        let _ = std::fs::remove_file(d.join("ui.failsafe"));
+        if safe {
+            if SAFE_STICKY.load(Ordering::Relaxed) {
+                // software rendering demonstrably works on a known-broken
+                // machine — keep it forever
+                let _ = std::fs::write(d.join("ui.safe"), b"ok");
+            } else {
+                // healthy machine probing — hand it back to the GPU path
+                let _ = std::fs::remove_file(d.join("ui.safe"));
+            }
+        }
+    }
+    serde_json::json!({ "safe": safe })
+}
+
+/// v0.15.1 — PAINT VERIFICATION. The handshake proves the page's JavaScript
+/// is alive, NOT that frames reach the screen: a broken compositor (the
+/// nastiest blank-window failure) runs JS fine and still paints nothing.
+/// The inline script watches requestAnimationFrame once the window is
+/// visible and reports back.
+#[tauri::command]
+fn ui_paint_ok(app: AppHandle) {
+    // frames confirmed on this launch's graphics path — clear any doubt
+    if !SAFE_MODE.load(Ordering::Relaxed) {
+        if let Ok(d) = app.path().app_data_dir() {
+            let _ = std::fs::remove_file(d.join("ui.failsafe"));
+        }
+    }
+}
+
+#[tauri::command]
+fn ui_paint_suspect(app: AppHandle) {
+    // window visible, compositor produced nothing for 5s — mark the machine
+    // so the NEXT launch runs software rendering
+    if !SAFE_MODE.load(Ordering::Relaxed) {
+        if let Ok(d) = app.path().app_data_dir() {
+            let _ = std::fs::write(d.join("ui.failsafe"), b"1");
+        }
     }
 }
 
@@ -231,6 +318,18 @@ fn build_widget(app: &tauri::AppHandle) -> bool {
     .shadow(false)
     .focused(false)
     .visible(true);
+    // v0.15.1 — safe graphics mode applies to the widget too: a machine whose
+    // webview GPU path is broken would render the widget exactly as blank as
+    // the main window was.
+    let widget = if SAFE_MODE.load(Ordering::Relaxed) {
+        widget
+            .additional_browser_args(
+                "--disable-gpu --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection",
+            )
+            .initialization_script("document.documentElement.classList.add('reduced');")
+    } else {
+        widget
+    };
     match widget.build() {
         Ok(_) => true,
         Err(e) => {
@@ -757,6 +856,9 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             close_splash,
+            ui_ready,
+            ui_paint_ok,
+            ui_paint_suspect,
             win_min,
             win_max_toggle,
             win_close,
@@ -858,10 +960,72 @@ pub fn run() {
             }
         })
         .setup(|app| {
-            // Window materials, applied before the main window is shown.
-            // v0.15.0 — the splash window gets NO Mica/Acrylic: its material
-            // fills the window rect with sharp corners and defeats the rounded
-            // glass card. The splash is a plain transparent webview now.
+            // v0.15.1 — BOOT MARKERS. Marker files in the app data dir decide
+            // how this launch boots:
+            //   ui.ok       the UI proved itself at least once (any launch)
+            //   ui.failsafe the last launch needed the failsafe (one-shot)
+            //   ui.safe     sticky safe-graphics mode (software rendering)
+            let data_dir = app.path().app_data_dir().ok();
+            let has_marker = |name: &str| {
+                data_dir
+                    .as_ref()
+                    .map(|d| d.join(name).is_file())
+                    .unwrap_or(false)
+            };
+            let booted_once = has_marker("ui.ok");
+            let rescued = has_marker("ui.failsafe");
+            let safe_sticky = has_marker("ui.safe");
+            // Safe graphics when: the last launch needed the failsafe, OR a
+            // previous safe launch succeeded (sticky), OR the UI has NEVER
+            // come up on this machine (fresh install → first launch probes in
+            // software, which paints reliably on every GPU; a healthy machine
+            // exits safe mode automatically on its second launch).
+            if rescued || safe_sticky || !booted_once {
+                SAFE_MODE.store(true, Ordering::Relaxed);
+            }
+            // only a PROVEN-broken machine keeps safe mode after a success —
+            // a probe launch (fresh install) graduates back to the GPU path
+            SAFE_STICKY.store(rescued || safe_sticky, Ordering::Relaxed);
+            // consume the one-shot rescue marker (ui_ready re-decides it)
+            if let Some(d) = &data_dir {
+                let _ = std::fs::remove_file(d.join("ui.failsafe"));
+            }
+            // v0.15.1 — the main window is built HERE (not in tauri.conf.json)
+            // so a machine with a broken webview GPU path can be launched with
+            // --disable-gpu. The window stays INVISIBLE until the webview
+            // proves it rendered something (ui_ready) — no more see-through
+            // windows with nothing painted inside.
+            {
+                let mut builder = tauri::WebviewWindowBuilder::new(
+                    app,
+                    "main",
+                    tauri::WebviewUrl::App("index.html".into()),
+                )
+                .title("OMP — Open Media Player")
+                .inner_size(1220.0, 780.0)
+                .min_inner_size(860.0, 560.0)
+                .decorations(false)
+                .transparent(true)
+                .visible(false)
+                .center()
+                .shadow(true);
+                if SAFE_MODE.load(Ordering::Relaxed) {
+                    // software webview rendering + reduced glass from frame 1
+                    builder = builder
+                        .additional_browser_args(
+                            "--disable-gpu --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection",
+                        )
+                        .initialization_script(
+                            "document.documentElement.classList.add('reduced');document.documentElement.dataset.safegfx='1';",
+                        );
+                }
+                builder.build()?;
+            }
+            // Window materials. The DWM material is OS-side — it is NOT
+            // affected by the webview's software rendering, so safe mode keeps
+            // the glass look. v0.15.0 — the splash window gets NO Mica/Acrylic:
+            // its material fills the window rect with sharp corners and
+            // defeats the rounded glass card.
             #[cfg(windows)]
             {
                 let mica = windows_build() >= 22000;
@@ -869,39 +1033,31 @@ pub fn run() {
                     apply_effect(&w, mica);
                 }
             }
-            // v0.15.0 — THE SPLASH IS A FIRST-LAUNCH LUXURY. A marker file in
-            // the app data dir says the UI came up successfully at least once.
-            //   first launch  → show the splash while the webview warms up;
-            //   every launch after → main window shows INSTANTLY, no splash.
-            // close_splash() writes the marker, so a machine whose webview
-            // never managed to boot still gets the splash next time.
-            let data_dir = app.path().app_data_dir().ok();
-            let booted_once = data_dir
-                .as_ref()
-                .map(|d| d.join("ui.ok").is_file())
-                .unwrap_or(false);
-            if booted_once {
-                if let Some(m) = app.get_webview_window("main") {
-                    let _ = m.show();
+            // Splash choreography — first launch (the UI never proved itself
+            // on this machine) shows the splash while the webview warms up.
+            // EVERY launch after shows nothing until ui_ready lands: the
+            // window then appears with real content already painted.
+            if !booted_once {
+                if let Some(s) = app.get_webview_window("splashscreen") {
+                    let _ = s.show();
                 }
-            } else if let Some(s) = app.get_webview_window("splashscreen") {
-                let _ = s.show();
             }
-            // FAILSAFE — the splash must never trap the app again. If the
-            // webview crashed or hangs, React never calls close_splash and
-            // the splash would sit there forever (the stuck-boot reports).
-            // After 10s: if the splash is still alive, kill it and surface
-            // the main window regardless.
+            // FAILSAFE — the boot can never trap the app or show an empty
+            // window forever. If after 8s the webview never proved itself:
+            // retire the splash, force-surface the main window and mark the
+            // machine so the NEXT launch runs software rendering.
             {
                 let app2 = app.handle().clone();
                 std::thread::spawn(move || {
-                    std::thread::sleep(std::time::Duration::from_secs(10));
+                    std::thread::sleep(std::time::Duration::from_secs(8));
                     if let Some(s) = app2.get_webview_window("splashscreen") {
                         let _ = s.close();
-                        if let Some(m) = app2.get_webview_window("main") {
-                            let _ = m.show();
-                            let _ = m.set_focus();
+                    }
+                    if !BOOT_SHOWN.load(Ordering::Relaxed) {
+                        if let Ok(d) = app2.path().app_data_dir() {
+                            let _ = std::fs::write(d.join("ui.failsafe"), b"1");
                         }
+                        show_main(&app2);
                     }
                 });
             }

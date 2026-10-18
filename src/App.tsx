@@ -88,9 +88,18 @@ export default function App() {
   const [dragOver, setDragOver] = useState(false);
   // latest media-entry router, shared with the drag & drop subscription
   const openPathRef = useRef<(p: string) => void>(() => {});
+  // v0.15.1 — safe graphics mode (Rust launches the webview with --disable-gpu
+  // when this machine's GPU path broke): glass effects stay reduced no matter
+  // what the settings say, software-rasterized backdrop blur is a CPU fire
+  const safeGfx = useRef(false);
 
   // boot: apply settings, close the native splash, THEN idle-work
   useEffect(() => {
+    // v0.15.1 — React is alive: retire the static boot hero (index.html) so
+    // the real UI takes over, and mark the document for the pre-React
+    // watchdog (it stops messaging once this flag lands).
+    document.documentElement.dataset.react = "1";
+    document.getElementById("omp-hero")?.remove();
     applySettings(settings);
     void initEngine(settings.engine); // resolve mpv availability before the Player mounts
     // v0.15.0 — first paint beats everything: OS info, the update nudge and
@@ -111,9 +120,38 @@ export default function App() {
           .catch(() => { /* offline — silence is fine for a background nudge */ });
       }
     }, 2500);
+    // v0.15.1 — BOOT HANDSHAKE (React side). The window is shown only when
+    // the shell answers ui_ready; the inline script in index.html already
+    // pings too, this is the backup that survives everything else. Retries
+    // absorb a slow IPC bridge on cold machines.
+    let hs = 0;
+    const handshake = () => {
+      hs++;
+      if (isTauri) {
+        invoke<{ safe?: boolean }>("ui_ready")
+          .then((r) => {
+            // window is up — the pre-React paint watch may start now
+            (window as unknown as { __ompStartPaintWatch?: () => void }).__ompStartPaintWatch?.();
+            if (r?.safe) {
+              safeGfx.current = true;
+              document.documentElement.classList.add("reduced");
+              toast("Safe graphics mode — GPU rendering was unstable on this machine", "info");
+            }
+          })
+          .catch(() => { if (hs < 40) setTimeout(handshake, 350); });
+      }
+    };
+    handshake();
     const t = setTimeout(() => {
       setBooted(true);
-      if (isTauri) invoke("close_splash");
+      // first launch only: retire the native splash (retrying — the IPC
+      // bridge can lag behind the 900ms mark on slow disks)
+      if (isTauri && FIRST_BOOT) {
+        let cs = 0;
+        const bye = () =>
+          invoke("close_splash").catch(() => { if (++cs < 30) setTimeout(bye, 350); });
+        bye();
+      }
     }, FIRST_BOOT ? 900 : 0);
     // fully unmount the boot overlay shortly after the fade — an invisible
     // overlay with an infinite loading animation burns CPU forever
@@ -283,6 +321,8 @@ export default function App() {
       const next = { ...cur, ...patch };
       saveSettings(next);
       applySettings(next);
+      // safe mode holds the effects down even if settings ask for full glass
+      if (safeGfx.current) document.documentElement.classList.add("reduced");
       return next;
     });
   };

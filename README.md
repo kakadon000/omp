@@ -28,6 +28,31 @@ distinctive, not into reinventing video decoding.
   you pick**, ten one-tap presets, themes that travel as `.omptheme` files,
   adjustable transparency, Reduced Effects for low-end PCs.
 
+## What's new in v0.15.1 — the boot that cannot fail
+
+- **The window can never appear empty again.** The main window is now shown
+  ONLY after the app's interface has actually rendered something (a boot
+  handshake between the webview and the shell). The "see-through blurred
+  wallpaper with nothing inside" state from the v0.15.0 reports is
+  structurally impossible now — no handshake, no window.
+- **Safe graphics mode, automatically.** If a launch ever fails to paint
+  (broken GPU drivers or a broken WebView2 update — the usual suspects on
+  the machines that reported a blank window), the next launch relaunches
+  the interface with software rendering, which paints reliably on every
+  machine. Healthy machines never notice; broken ones heal themselves on
+  the relaunch. Glass effects stay reduced while it's active so the CPU
+  isn't asked to blur the whole UI.
+- **Something always paints instantly.** A static boot card (logo, tagline,
+  progress bar) is baked directly into the page — it shows the moment the
+  webview can rasterize anything, even if the app bundle is still parsing.
+  If startup is unusually slow, the card says so and offers a one-tap
+  Reload. Bundle crashes surface as a readable message instead of a
+  see-through window.
+- **The 8-second failsafe stays**: if the interface never proves itself,
+  the window surfaces anyway and the machine is marked for safe-graphics
+  relaunch. The splash, the handshake and the failsafe all retry — a slow
+  IPC bridge on a cold disk can no longer strand the boot.
+
 ## What's new in v0.15.0 — instant launch, and a splash that behaves
 
 - **The loading screen shows ONCE — first launch only.** A marker in OMP's
