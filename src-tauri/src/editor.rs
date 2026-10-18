@@ -337,7 +337,7 @@ pub fn editor_export(
     };
     // one render at a time
     {
-        let mut guard = CHILD.lock().unwrap();
+        let guard = CHILD.lock().unwrap();
         if guard.is_some() {
             return false;
         }

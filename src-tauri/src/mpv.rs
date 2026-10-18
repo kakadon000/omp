@@ -230,7 +230,7 @@ unsafe fn load_api_logged() -> LoadReport {
         let h = LoadLibraryW(wide.as_ptr());
         if h == 0 {
             let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
-            rep.last_error = e;
+            rep.last_error = e as u32;
             rep.attempts
                 .push(format!("{spec} → load refused by Windows (winerror {e})"));
             continue;
