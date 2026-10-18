@@ -8,6 +8,7 @@ import { invoke, isTauri } from "../lib/tauri";
 import { audioUse, setVolume, seek, toggle, next, trackArt } from "../lib/audio";
 import { fmtTime, pct } from "../lib/format";
 import { navigate } from "../lib/router";
+import { loadSettings, saveSettings, type Settings } from "../lib/store";
 
 export function WidgetPage() {
   const st = audioUse();
@@ -146,8 +147,10 @@ export function WidgetPage() {
                 <label className="switch">
                   <input
                     type="checkbox"
-                    defaultChecked
+                    defaultChecked={loadSettings().bgPlayback !== false}
                     onChange={(e) => {
+                      const s: Settings = { ...loadSettings(), bgPlayback: e.target.checked };
+                      saveSettings(s);
                       void invoke("set_background_playback", { v: e.target.checked });
                     }}
                   />

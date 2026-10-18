@@ -16,6 +16,7 @@ export type Settings = {
   seekStep: number;
   sidebarRail: boolean;
   autoHideSidebar: boolean;
+  bgPlayback: boolean; // v0.6.1 — persisted, was a lossy useState before
 };
 
 const DEFAULTS: Settings = {
@@ -29,6 +30,7 @@ const DEFAULTS: Settings = {
   seekStep: 10,
   sidebarRail: false,
   autoHideSidebar: true,
+  bgPlayback: true,
 };
 
 const KEY = "omp.settings";
@@ -183,6 +185,10 @@ import { ensureSeekable } from "./media";
 
 export type CustomMedia = { name: string; url: string; path?: string; startAt?: number };
 export const customMedia = makeStore<CustomMedia>({ name: "", url: "" });
+
+/** Image opened via "Open with OMP" / double-click — shown at the top of the
+ *  Gallery until the app restarts. (Object-wrapped: the store is object-typed.) */
+export const externalImage = makeStore<{ img: { path: string; name: string } | null }>({ img: null });
 
 /* ------------------------- progress + history ------------------------- */
 export type Progress = Record<string, { t: number; d: number }>;

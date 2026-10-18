@@ -75,6 +75,7 @@ extern "system" {
 extern "system" {
     fn GetModuleHandleW(name: *const u16) -> HMODULE;
     fn LoadLibraryW(name: *const u16) -> HMODULE;
+    fn FreeLibrary(m: HMODULE) -> i32;
     fn GetProcAddress(m: HMODULE, name: *const u8) -> *mut c_void;
 }
 
@@ -676,6 +677,84 @@ pub fn mpv_stats() -> Option<EngineStats> {
         }
     });
     s
+}
+
+/// v0.6.1 — engine diagnostics for the Settings screen. When libmpv fails to
+/// load on a user machine (blocked DLL, missing Vulkan loader, AV quarantine)
+/// every symptom used to be silent: no music, no thumbnails, a vague warning.
+/// This reports the EXACT probe result: which path exists, which loaded, and
+/// the raw Win32 error code of the failure.
+#[derive(Serialize)]
+pub struct EngineDiag {
+    pub available: bool,     // DLL loaded + symbols resolved (cached decision)
+    pub initialized: bool,   // an mpv instance exists right now
+    pub dll_path: String,    // the path that LOADED ("" when none)
+    pub probed_path: String, // the candidate we tried last in this call
+    pub load_error: u32,     // GetLastError of the failed LoadLibraryW (0 = ok)
+    pub version: Option<String>,
+}
+
+#[tauri::command]
+pub fn mpv_diag() -> EngineDiag {
+    #[cfg(windows)]
+    unsafe {
+        let mut last_err: u32 = 0;
+        let mut probed = String::new();
+        let mut loaded: Option<String> = None;
+
+        // re-probe every candidate WITHOUT caching, purely for diagnostics
+        let mut try_load = |path: &str| -> bool {
+            probed = path.to_string();
+            let wide = to_wide(path);
+            let h = LoadLibraryW(wide.as_ptr());
+            if h != 0 {
+                loaded = Some(path.to_string());
+                FreeLibrary(h);
+                true
+            } else {
+                // std's last_os_error is the reliable GetLastError read
+                last_err = std::io::Error::last_os_error()
+                    .raw_os_error()
+                    .unwrap_or(0) as u32;
+                false
+            }
+        };
+
+        try_load("mpv-2.dll");
+        if loaded.is_none() {
+            if let Ok(exe) = std::env::current_exe() {
+                if let Some(dir) = exe.parent() {
+                    for rel in ["mpv-2.dll", "resources\\mpv-2.dll", "..\\mpv-2.dll"] {
+                        let p = dir.join(rel);
+                        if p.exists() && try_load(&p.to_string_lossy()) {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        let a = api();
+        EngineDiag {
+            available: a.is_some(),
+            initialized: MPV.lock().map(|g| g.is_some()).unwrap_or(false),
+            dll_path: loaded.unwrap_or_default(),
+            probed_path: probed,
+            load_error: if a.is_some() { 0 } else { last_err },
+            version: a.map(|a| unsafe { api_version_string((a.client_api_version)()) }),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        EngineDiag {
+            available: api().is_some(),
+            initialized: false,
+            dll_path: String::new(),
+            probed_path: String::new(),
+            load_error: 0,
+            version: None,
+        }
+    }
 }
 
 /// True when the engine has an AUDIO file loaded —

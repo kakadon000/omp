@@ -6,6 +6,7 @@
 
 import { StrictMode, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { invoke, isTauri, tauriEmit, tauriListen } from "../lib/tauri";
 import "./widget.css";
 
@@ -53,8 +54,10 @@ const fmt = (t: number) => {
 
 function artUrl(p: string): string {
   if (!p) return "";
-  if (/^(https?|asset|data|blob|tauri):/.test(p) || p.startsWith("./")) return p;
-  return `asset://localhost/${encodeURI(p.replace(/\\/g, "/")).replace(/#/g, "%23").replace(/\?/g, "%3F")}`;
+  if (/^(https?|data|blob|tauri):/.test(p) || p.startsWith("./")) return p;
+  // convertFileSrc → http://asset.localhost/… on Windows (asset:// 404s there)
+  if (isTauri) return convertFileSrc(p);
+  return p;
 }
 
 function Widget() {

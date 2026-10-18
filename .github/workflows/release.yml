@@ -60,6 +60,6 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "OMP ${{ github.ref_name }}"
-          releaseBody: "Every Format. One Player. Open to All. — v0.6.0: Phase 3 — Music & widgets. Real music library with embedded album art and tag metadata, SQLite playlists, internet radio with live now-playing titles, a real always-on-top desktop widget window, and background playback (close keeps the music). Download the Windows installer below."
+          releaseBody: "Every Format. One Player. Open to All. — v0.6.1: bug-fix round. Fixes the desktop widget freeze/white window (window creation no longer deadlocks the Windows event loop) and makes its drag butter-smooth; music playback no longer fails silently — engine problems now show exact diagnostics in Settings → About; the Gallery now shows REAL previews of every scanned image and photo (rescan your folders once); correct artwork URLs on Windows (album art + thumbnails render); the Playlists tab is now the real SQLite playlist manager; OMP registers as an 'Open with' app for videos, music and images so you can set it as your default player; rounder Fluent UI. Download the Windows installer below."
           releaseDraft: false
           prerelease: false

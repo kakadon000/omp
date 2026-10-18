@@ -2,9 +2,57 @@
 // Owns: window effects (Mica / Acrylic per Windows generation), splash handoff,
 // custom titlebar window controls, and shell info for the UI.
 
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
+
+/// Files passed on the command line (open-with / "default player" launches)
+/// that arrived before the UI was ready to listen. Drained by the frontend
+/// once via `pending_open_paths`.
+static PENDING_OPENS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Media extensions we accept from the command line (open-with integration).
+fn is_media_ext(path: &str) -> bool {
+    let ext = path
+        .rsplit('.')
+        .next()
+        .map(|e| e.to_ascii_lowercase())
+        .unwrap_or_default();
+    matches!(
+        ext.as_str(),
+        "mp4" | "mkv" | "webm" | "mov" | "avi" | "m4v" | "wmv" | "flv" | "ts" | "mpg" | "mpeg"
+            | "3gp" | "ogv"
+            | "mp3" | "flac" | "m4a" | "wav" | "ogg" | "oga" | "opus" | "aac" | "wma"
+            | "jpg" | "jpeg" | "png" | "webp" | "bmp" | "gif" | "avif" | "tif" | "tiff"
+    )
+}
+
+/// First existing media file found in `argv` (skips flags and the exe path).
+fn media_from_argv(argv: &[String]) -> Option<String> {
+    argv.iter().skip(1).find_map(|a| {
+        let a = a.trim();
+        if a.is_empty() || a.starts_with('-') {
+            return None;
+        }
+        let p = std::path::Path::new(a);
+        if p.is_file() && is_media_ext(a) {
+            Some(a.to_string())
+        } else {
+            None
+        }
+    })
+}
+
+/// Queue + broadcast a file opened via the command line.
+fn queue_open(app: &AppHandle, path: String) {
+    if let Ok(mut q) = PENDING_OPENS.lock() {
+        if !q.contains(&path) {
+            q.push(path.clone());
+        }
+    }
+    let _ = app.emit("omp://open-path", path);
+}
 
 /// Phase 3: when music is playing, the main window's ✕ hides it (music keeps
 /// going + the desktop widget appears) instead of quitting the whole app.
@@ -138,8 +186,13 @@ fn shell_info() -> serde_json::Value {
 
 /// Phase 3 — desktop widget (a real second window, alive while the main
 /// window is hidden, driven by the same omp://mpv events).
-#[tauri::command]
-fn widget_toggle(app: tauri::AppHandle) -> bool {
+///
+/// v0.6.1 FIX: window creation inside a *synchronous* command deadlocks the
+/// Windows event loop (the builder waits for the loop while the loop waits
+/// for the command) — the widget came up white/frozen. The command is now
+/// async per the Tauri contract, and the close-to-background path builds the
+/// widget from a background thread so the event loop is never blocked.
+fn build_widget(app: &tauri::AppHandle) -> bool {
     if let Some(w) = app.get_webview_window("widget") {
         if w.is_visible().unwrap_or(false) {
             let _ = w.hide();
@@ -150,7 +203,7 @@ fn widget_toggle(app: tauri::AppHandle) -> bool {
         return true;
     }
     let widget = tauri::WebviewWindowBuilder::new(
-        &app,
+        app,
         "widget",
         tauri::WebviewUrl::App("widget.html".into()),
     )
@@ -162,7 +215,11 @@ fn widget_toggle(app: tauri::AppHandle) -> bool {
     .transparent(true)
     .always_on_top(true)
     .skip_taskbar(true)
-    .shadow(true)
+    // v0.6.1: shadow OFF for the transparent window — DWM re-renders the
+    // shadow on every move and made dragging feel laggy/glitchy, and the
+    // frameless-window shadow also drew a 1 px white border. The card draws
+    // its own soft shadow in CSS instead.
+    .shadow(false)
     .focused(false)
     .visible(true);
     match widget.build() {
@@ -172,6 +229,11 @@ fn widget_toggle(app: tauri::AppHandle) -> bool {
             false
         }
     }
+}
+
+#[tauri::command]
+async fn widget_toggle(app: tauri::AppHandle) -> bool {
+    build_widget(&app)
 }
 
 /// Expanded ↔ mini widget size, applied from inside the widget UI.
@@ -210,8 +272,51 @@ fn set_background_playback(v: bool) {
     BACKGROUND_PLAYBACK.store(v, Ordering::Relaxed);
 }
 
+/// Paths passed on the command line before the UI was listening
+/// (double-click "open with OMP" while booting). Drained once by the UI.
+#[tauri::command]
+fn pending_open_paths() -> Vec<String> {
+    PENDING_OPENS
+        .lock()
+        .map(|mut q| std::mem::take(&mut *q))
+        .unwrap_or_default()
+}
+
+/// Open the Windows "Default apps" page — used by the Settings row that
+/// helps the user make OMP the default player for video/audio/images.
+#[tauri::command]
+fn open_default_apps() -> bool {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", "ms-settings:defaultapps"])
+            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+            .spawn()
+            .is_ok()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+
 pub fn run() {
     tauri::Builder::default()
+        // MUST be the first plugin: catches second launches (double-clicking
+        // more media files) and forwards their paths to the running app
+        // instead of spawning a second OMP process.
+        .plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
+            if let Some(p) = media_from_argv(&argv) {
+                queue_open(app, p);
+            }
+            // a second launch means the user wants OMP on screen
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.show();
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
@@ -264,7 +369,10 @@ pub fn run() {
             widget_set_expanded,
             app_show_main,
             app_quit,
-            set_background_playback
+            set_background_playback,
+            pending_open_paths,
+            open_default_apps,
+            mpv::mpv_diag
         ])
         .on_window_event(|window, event| {
             // Phase 3: closing the main window while music plays → hide it and
@@ -276,8 +384,13 @@ pub fn run() {
                 {
                     api.prevent_close();
                     let _ = window.hide();
-                    // the widget is the recovery UI — make sure it's up
-                    let _ = widget_toggle(window.app_handle().clone());
+                    // the widget is the recovery UI — make sure it's up.
+                    // Built from a background thread: window creation from
+                    // inside this event-loop handler would deadlock Windows.
+                    let app2 = window.app_handle().clone();
+                    std::thread::spawn(move || {
+                        let _ = build_widget(&app2);
+                    });
                 }
             }
         })
@@ -291,6 +404,15 @@ pub fn run() {
                 }
                 if let Some(s) = app.get_webview_window("splashscreen") {
                     apply_effect(&s, mica);
+                }
+            }
+            // "Open with OMP" / default-player launch: collect media paths
+            // from OUR command line before the UI mounts; the UI drains them
+            // via pending_open_paths once its listeners are up.
+            let own_args: Vec<String> = std::env::args().collect();
+            if let Some(p) = media_from_argv(&own_args) {
+                if let Ok(mut q) = PENDING_OPENS.lock() {
+                    q.push(p);
                 }
             }
             // Phase 2: SQLite media library (opened lazily; no scan at boot —

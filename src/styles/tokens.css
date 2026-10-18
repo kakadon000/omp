@@ -4,8 +4,8 @@
 
 :root {
   --glass-blur: 24px;
-  --radius: 8px;
-  --radius-lg: 12px;
+  --radius: 12px;
+  --radius-lg: 18px;
   --titlebar-h: 44px;
   --sidebar-w: 232px;
   --sidebar-rail: 60px;
@@ -72,4 +72,4 @@
 }
 
 /* ---------------- Windows 10 mode: square windows, tighter chrome -------- */
-:root[data-win="10"] { --radius: 0px; --radius-lg: 4px; }
+:root[data-win="10"] { --radius: 6px; --radius-lg: 8px; }

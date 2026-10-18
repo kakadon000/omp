@@ -42,6 +42,18 @@ const VIDEO_EXT: &[&str] = &[
 const AUDIO_EXT: &[&str] = &[
     "mp3", "flac", "m4a", "wav", "ogg", "oga", "opus", "aac", "wma", "aiff", "alac",
 ];
+/// v0.6.1 — the Gallery now reads REAL scanned images. Images are indexed
+/// with the original path as their own preview (no probe needed), so every
+/// photo in a scanned folder shows up with a live thumbnail.
+const IMAGE_EXT: &[&str] = &[
+    "jpg", "jpeg", "png", "webp", "bmp", "gif", "avif", "tif", "tiff", "jfif", "ico",
+];
+/// v0.6.1 — the Gallery now reads REAL scanned images. Images are indexed
+/// with the original path as their own preview (no probe needed), so every
+/// photo in a scanned folder shows up with a live thumbnail.
+const IMAGE_EXT: &[&str] = &[
+    "jpg", "jpeg", "png", "webp", "bmp", "gif", "avif", "tif", "tiff", "jfif", "ico",
+];
 const SKIP_DIRS: &[&str] = &[
     "$RECYCLE.BIN", "System Volume Information", "node_modules",
     ".git", "Windows", "Program Files", "Program Files (x86)",
@@ -232,6 +244,8 @@ fn run_scan(app: AppHandle, db_path: PathBuf, thumbs: PathBuf) {
                 "video"
             } else if AUDIO_EXT.contains(&ext.as_str()) {
                 "audio"
+            } else if IMAGE_EXT.contains(&ext.as_str()) {
+                "image"
             } else {
                 continue;
             };
@@ -272,13 +286,16 @@ fn run_scan(app: AppHandle, db_path: PathBuf, thumbs: PathBuf) {
                 .parent()
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_default();
+            // images carry their own preview (the file itself) — no probe
+            // phase needed, so they enter the DB already "probed"
+            let probed_flag = if kind == "image" { 1 } else { 0 };
             let _ = conn.execute(
                 "INSERT INTO media (path, title, kind, dir, size, mtime, probed, added_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 0, ?7)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                  ON CONFLICT(path) DO UPDATE SET
                    title=excluded.title, size=excluded.size, mtime=excluded.mtime,
-                   probed=0, thumb=''",
-                params![path, title, kind, dir, size, mtime, now_secs()],
+                   kind=excluded.kind, probed=CASE WHEN media.probed=2 THEN excluded.probed ELSE media.probed END",
+                params![path, title, kind, dir, size, mtime, probed_flag, now_secs()],
             );
             found += 1;
             if found % 20 == 0 {
@@ -529,6 +546,10 @@ pub fn library_list(
             "SELECT {ITEM_COLS} FROM media WHERE kind='audio' AND \
              (title LIKE ?1 OR path LIKE ?1 OR artist LIKE ?1 OR album LIKE ?1) \
              ORDER BY {order} LIMIT 2000"
+        ),
+        "image" => format!(
+            "SELECT {ITEM_COLS} FROM media WHERE kind='image' AND (title LIKE ?1 OR path LIKE ?1) \
+             ORDER BY {order} LIMIT 4000"
         ),
         _ => format!(
             "SELECT {ITEM_COLS} FROM media WHERE (title LIKE ?1 OR path LIKE ?1) \

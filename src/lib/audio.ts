@@ -11,8 +11,10 @@
 // and the widget talks back through `omp://widget-cmd`.
 
 import { useSyncExternalStore } from "react";
+import { convertFileSrc } from "@tauri-apps/api/core";
 
 import { invoke, isTauri, tauriEmit, tauriListen } from "./tauri";
+import { toast } from "../components/Toast";
 import { onMpvEvent } from "./engine";
 
 export type AudioTrack = {
@@ -127,7 +129,15 @@ async function ensureEngine(): Promise<boolean> {
   const st = await invoke<{ available?: boolean; active?: boolean }>("mpv_status");
   if (!st?.available) return false;
   if (!st?.active) {
-    await invoke("mpv_attach", { hwdec: "no", show: false });
+    // attach the engine with a HIDDEN surface (audio never shows a picture)
+    const r1 = await invoke<{ active?: boolean }>("mpv_attach", { hwdec: "no", show: false });
+    if (!r1?.active) {
+      // one retry — a first-attach race (window creation during boot) can
+      // transiently fail; a beat later it goes through
+      await new Promise((r) => setTimeout(r, 250));
+      const r2 = await invoke<{ active?: boolean }>("mpv_attach", { hwdec: "no", show: false });
+      if (!r2?.active) return false;
+    }
   }
   attached = true;
   return true;
@@ -137,9 +147,13 @@ async function ensureEngine(): Promise<boolean> {
 let currentSrc = "";
 
 function fmtAsset(src: string): string {
-  // library thumbs are absolute paths → asset protocol URL for the webview
-  if (!src || /^(https?|asset|data|blob|tauri):/.test(src) || src.startsWith("./")) return src;
-  return `asset://localhost/${encodeURI(src.replace(/\\/g, "/")).replace(/#/g, "%23").replace(/\?/g, "%3F")}`;
+  // library thumbs are absolute paths → asset protocol URL for the webview.
+  // convertFileSrc picks the RIGHT scheme per platform (http://asset.localhost
+  // on Windows WebView2, asset:// on Linux/macOS) — hand-rolled asset:// URLs
+  // silently 404 on Windows and were the broken-artwork bug in v0.6.0.
+  if (!src || /^(https?|data|blob|tauri):/.test(src) || src.startsWith("./")) return src;
+  if (isTauri) return convertFileSrc(src);
+  return src;
 }
 
 export function trackArt(t: AudioTrack | null): string {
@@ -159,8 +173,19 @@ async function playInner(t: AudioTrack) {
   });
   const engineOk = await ensureEngine();
   if (engineOk) {
-    await invoke("mpv_load", { source: t.src, start: null });
-    await invoke("mpv_set_volume", { v: Math.round(audioStore.get().volume * 100) });
+    const ok = await invoke<boolean>("mpv_load", { source: t.src, start: null });
+    if (!ok) {
+      audioStore.set({ playing: false });
+      toast("The engine refused this file — it may be corrupt or an unsupported stream", "err");
+    } else {
+      await invoke("mpv_set_volume", { v: Math.round(audioStore.get().volume * 100) });
+    }
+  } else if (isTauri) {
+    // v0.6.1: NO silent web fallback inside the app — an HTMLAudioElement
+    // cannot play a raw filesystem path, so "playing" would be a lie with
+    // zero sound. Surface the real problem instead.
+    audioStore.set({ playing: false });
+    toast("Native engine unavailable — open Settings → Playback for diagnostics", "err");
   } else if (el) {
     el.src = t.src;
     el.volume = audioStore.get().volume;

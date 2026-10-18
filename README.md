@@ -27,6 +27,43 @@ distinctive, not into reinventing video decoding.
 - **Theme Studio** — dark/light/system, five tasteful accents, adjustable
   transparency, Reduced Effects for low-end PCs.
 
+## What's new in v0.6.1 — the bug-fix round
+
+- **Desktop widget: fixed.** The widget window was created inside a
+  *synchronous* command — on Windows that deadlocks the event loop (the
+  builder waits for the loop, the loop waits for the command): the widget
+  came up white/frozen and could take the app with it. Window creation is
+  now an async command per the Tauri contract. The native drop shadow is
+  off (it also drew a 1 px white border on frameless windows) and the card
+  dropped its `backdrop-filter` — the blur sampled the whole desktop on
+  every compositor frame and made **dragging feel slow and glitchy**. The
+  widget now drags butter-smooth.
+- **Music: no more silent failures.** An HTMLAudioElement can't play a raw
+  filesystem path, so the old web fallback inside the app meant "playing"
+  with zero sound. The audio service now verifies the engine attach result
+  (with one retry), checks the `mpv_load` result, and surfaces a real error
+  toast instead of pretending. **Settings → About → Engine diagnostics**
+  shows the exact engine state — DLL path, libmpv version, and the raw
+  Windows error code if the DLL refuses to load (antivirus quarantine and
+  missing GPU runtimes are the usual culprits).
+- **Previews everywhere.** The Gallery now reads **real scanned images**
+  (jpg/png/webp/bmp/gif/avif/tiff) from the library database — every photo
+  in your scanned folders shows as a live thumbnail with the lightbox
+  viewer (rescan your folders once to index images). Album art and video
+  thumbnails now use the correct per-platform asset URL — the hand-rolled
+  `asset://` links silently 404'd on Windows WebView2.
+- **Default player.** OMP now registers file associations for videos,
+  music and images at install time — right-click any media file →
+  *Open with → OMP*, or hit Settings → Playback → Default apps to set it
+  system-wide. Double-clicking more files goes to the running app
+  (single-instance), and files passed at launch open instantly: video →
+  Player, audio → Music, image → Gallery.
+- **The Playlists tab is real.** The Library screen's Playlists tab now
+  manages the actual SQLite playlists (create, view tracks, remove items,
+  delete, play) instead of demo cards.
+- **Rounder, tighter UI** — cards, panels, chips and menus got the full
+  Fluent radius treatment (Windows 10 keeps its tighter corners).
+
 ## What's new in v0.6.0 — Phase 3: Music & widgets
 
 - **The real music library** — every audio file OMP scans gets its embedded

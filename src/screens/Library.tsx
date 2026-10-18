@@ -4,7 +4,7 @@ import { toast } from "../components/Toast";
 import { openContextMenu } from "../components/ContextMenu";
 import { navigate } from "../lib/router";
 import { loadHistory, clearHistory, removeHistory, customMedia, type HistItem } from "../lib/store";
-import { isTauri } from "../lib/tauri";
+import { invoke, isTauri } from "../lib/tauri";
 import { fmtClock, fmtTime, fmtSize } from "../lib/format";
 import {
   type MediaItem, type ScanEvent,
@@ -353,30 +353,139 @@ export function Library({ query }: { query: string }) {
         </div>
       )}
 
-      {tab === "playlists" && (
-        <>
-          <div className="stat-grid" style={{ marginBottom: 18, gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))" }}>
-            {[
-              { name: "Favourites", icon: "heart", n: 12 },
-              { name: "Focus Mix", icon: "sparkle", n: 8 },
-              { name: "Watch Later", icon: "clock", n: 5 },
-              { name: "Road Trip", icon: "rocket", n: 24 },
-            ].map((p) => (
-              <div key={p.name} className="card hover stat" style={{ cursor: "pointer", padding: 16 }}
-                onClick={() => toast("Smart playlists land with Phase 3 (music) — the SQLite core is live today", "info")}>
-                <span className="icon-btn sm" style={{ background: "var(--accent-dim)", color: "var(--accent)", marginBottom: 8 }}>
-                  <Icon name={p.icon} size={14} />
-                </span>
-                <div className="v" style={{ fontSize: 16 }}>{p.name}</div>
-                <div className="k">{p.n} items</div>
-              </div>
-            ))}
-          </div>
-          <button className="btn" onClick={() => toast("Playlist creation lands with Phase 3 — the SQLite core is live today", "info")}>
-            <Icon name="plus" size={15} /> New playlist
-          </button>
-        </>
-      )}
+      {tab === "playlists" && <PlaylistsTab />}
     </div>
+  );
+}
+
+/* ------------------------- playlists tab (real SQLite) ------------------------- */
+
+type PlaylistRow = { id: number; name: string; trackCount: number };
+
+function PlaylistsTab() {
+  const [pls, setPls] = useState<PlaylistRow[]>([]);
+  const [name, setName] = useState("");
+  const [items, setItems] = useState<{ pl: PlaylistRow; rows: MediaItem[] } | null>(null);
+
+  const refresh = useCallback(() => {
+    if (!isTauri) return;
+    void invoke<PlaylistRow[]>("playlists_all").then((r) => setPls(r ?? []));
+  }, []);
+
+  useEffect(refresh, [refresh]);
+
+  const create = async () => {
+    const n = name.trim();
+    if (!n) return;
+    const id = await invoke<number | null>("playlist_create", { name: n });
+    if (id) {
+      toast(`Playlist "${n}" created`, "ok");
+      setName("");
+      refresh();
+    } else toast("Could not create (duplicate name?)", "err");
+  };
+
+  const play = async (pl: PlaylistRow) => {
+    const rows = (await invoke<MediaItem[]>("playlist_items", { id: pl.id })) ?? [];
+    if (!rows.length) {
+      toast("Playlist is empty — right-click tracks to add them", "info");
+      return;
+    }
+    const { libItemToTrack, playTracks } = await import("../lib/audio");
+    playTracks(rows.map(libItemToTrack), 0);
+    toast(`Playing "${pl.name}" — ${rows.length} track${rows.length === 1 ? "" : "s"}`, "ok");
+  };
+
+  const openDetails = async (pl: PlaylistRow) => {
+    const rows = (await invoke<MediaItem[]>("playlist_items", { id: pl.id })) ?? [];
+    setItems({ pl, rows });
+  };
+
+  return (
+    <>
+      {isTauri ? (
+        <>
+          <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
+            <input
+              className="input" placeholder="New playlist name" style={{ flex: 1, maxWidth: 320 }}
+              value={name} onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") void create(); }}
+            />
+            <button className="btn sm accent" onClick={() => void create()}>
+              <Icon name="plus" size={14} /> Create
+            </button>
+          </div>
+          {pls.length === 0 ? (
+            <div className="card">
+              <div className="empty">
+                <Icon name="list" />
+                <div className="t">No playlists yet</div>
+                <div className="d">Create one above, or right-click any track on the Music screen → "Add to playlist". Playlists live in your library database.</div>
+              </div>
+            </div>
+          ) : (
+            <div className="stat-grid" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))" }}>
+              {pls.map((p) => (
+                <div key={p.id} className="card hover stat" style={{ cursor: "pointer", padding: 16 }}
+                  onClick={() => void play(p)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    openContextMenu(e.clientX, e.clientY, [
+                      { label: "Play", icon: "play", onClick: () => void play(p) },
+                      { label: "View tracks", icon: "list", onClick: () => void openDetails(p) },
+                      { sep: true },
+                      { label: "Delete playlist", icon: "trash", danger: true, onClick: () => {
+                        void invoke("playlist_delete", { id: p.id }).then(() => { toast("Playlist deleted", "ok"); refresh(); });
+                      } },
+                    ], p.name);
+                  }}>
+                  <span className="icon-btn sm" style={{ background: "var(--accent-dim)", color: "var(--accent)", marginBottom: 8 }}>
+                    <Icon name="list" size={14} />
+                  </span>
+                  <div className="v" style={{ fontSize: 16 }}>{p.name}</div>
+                  <div className="k">{p.trackCount} track{p.trackCount === 1 ? "" : "s"}</div>
+                </div>
+              ))}
+            </div>
+          )}
+          {items && (
+            <div className="card" style={{ marginTop: 16, padding: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 8px 10px" }}>
+                <b style={{ fontSize: 13.5 }}>{items.pl.name}</b>
+                <span style={{ fontSize: 12, color: "var(--text-3)" }}>{items.rows.length} tracks</span>
+                <span style={{ flex: 1 }} />
+                <button className="btn sm" onClick={() => void play(items.pl)}><Icon name="play" size={13} /> Play all</button>
+                <button className="icon-btn sm" onClick={() => setItems(null)} aria-label="Close"><Icon name="close" size={13} /></button>
+              </div>
+              {items.rows.map((r) => (
+                <div key={r.id} className="hist-row" style={{ cursor: "default" }}>
+                  <div className="hist-thumb">
+                    {r.thumb ? <img src={fileSrc(r.thumb)} alt="" loading="lazy" /> : <Icon name="music" />}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.title}</div>
+                    <div style={{ fontSize: 11.5, color: "var(--text-3)" }}>{r.artist || "Unknown artist"}</div>
+                  </div>
+                  <button className="icon-btn sm" onClick={() => {
+                    void invoke("playlist_remove_item", { id: items.pl.id, path: r.path }).then(() => {
+                      void openDetails(items.pl);
+                      refresh();
+                    });
+                  }} aria-label="Remove"><Icon name="close" size={13} /></button>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      ) : (
+        <div className="card">
+          <div className="empty">
+            <Icon name="list" />
+            <div className="t">Playlists live in the desktop app</div>
+            <div className="d">SQLite playlists sync with your library — download OMP to build your own.</div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }

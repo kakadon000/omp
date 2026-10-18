@@ -1,10 +1,28 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { Icon } from "../components/Icon";
 import { toast } from "../components/Toast";
 import { openContextMenu } from "../components/ContextMenu";
 import { IMAGES } from "../lib/data";
-import { pushHistory } from "../lib/store";
+import { pushHistory, externalImage } from "../lib/store";
 import { openImageFiles } from "../lib/tauri";
+import {
+  listItems, fileSrc, removeItem, revealFile, type MediaItem,
+} from "../lib/library";
+import { isTauri, invoke } from "../lib/tauri";
+import { fmtSize } from "../lib/format";
+import { navigate } from "../lib/router";
+
+type GalItem = {
+  id: string;
+  name: string;
+  src: string;
+  w: number;
+  h: number;
+  size: string;
+  folder: string;
+  libId?: number;
+  path?: string;
+};
 
 export function Gallery({ query }: { query: string }) {
   const [extra, setExtra] = useState<{ id: string; name: string; src: string }[]>([]);
@@ -12,10 +30,48 @@ export function Gallery({ query }: { query: string }) {
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [openId, setOpenId] = useState<string | null>(null);
 
-  const all = [
-    ...IMAGES,
-    ...extra.map((e) => ({ ...e, w: 0, h: 0, size: "—", folder: "Added" })),
-  ];
+  /* ---- v0.6.1: REAL scanned images from the SQLite library ---- */
+  const [libImages, setLibImages] = useState<MediaItem[] | null>(null);
+  useEffect(() => {
+    if (!isTauri) return;
+    let dead = false;
+    void listItems(query, "image", "added").then((r) => { if (!dead) setLibImages(r ?? []); });
+    return () => { dead = true; };
+  }, [query]);
+
+  const ext = useSyncExternalStore(externalImage.sub, externalImage.get)?.img;
+
+  const libItems: GalItem[] = useMemo(
+    () =>
+      (libImages ?? []).map((m) => ({
+        id: `lib${m.id}`,
+        name: m.title,
+        src: fileSrc(m.path),
+        w: m.width,
+        h: m.height,
+        size: fmtSize(m.size),
+        folder: m.dir.split(/[\\/]/).filter(Boolean).pop() || m.dir || "Scanned",
+        libId: m.id,
+        path: m.path,
+      })),
+    [libImages]
+  );
+
+  const demoItems: GalItem[] = IMAGES.map((i) => ({
+    id: i.id, name: i.name, src: i.src, w: i.w, h: i.h,
+    size: i.size, folder: i.folder,
+  }));
+
+  const all = useMemo(() => {
+    const base = isTauri ? [...libItems, ...extra.map((e) => ({ ...e, w: 0, h: 0, size: "—", folder: "Added" }))] : [...demoItems, ...extra.map((e) => ({ ...e, w: 0, h: 0, size: "—", folder: "Added" }))];
+    // an image opened via "Open with OMP" floats to the top of the session
+    if (isTauri && ext) {
+      return [{ id: "ext0", name: ext.name, src: fileSrc(ext.path), w: 0, h: 0, size: "—", folder: "Opened just now" } as GalItem, ...base];
+    }
+    return base;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isTauri, libItems, extra, ext]);
+
   const folders = ["All", ...new Set(all.map((i) => i.folder))];
   const q = query.toLowerCase();
   const items = all.filter(
@@ -42,7 +98,7 @@ export function Gallery({ query }: { query: string }) {
     });
   };
 
-  const imgMenu = (e: React.MouseEvent, img: { id: string; name: string }) => {
+  const imgMenu = (e: React.MouseEvent, img: GalItem) => {
     e.preventDefault();
     e.stopPropagation();
     openContextMenu(e.clientX, e.clientY, [
@@ -50,13 +106,40 @@ export function Gallery({ query }: { query: string }) {
       { label: sel.has(img.id) ? "Deselect" : "Select", icon: "check", onClick: () => toggleSel(img.id) },
       { sep: true },
       { label: "Copy filename", icon: "type", onClick: () => { void navigator.clipboard?.writeText(img.name); toast("Filename copied", "ok"); } },
+      ...(isTauri && img.path
+        ? [
+            { label: "Open file location", icon: "folder", onClick: () => void revealFile(img.path!) },
+            ...(img.libId
+              ? [{
+                  label: "Remove from library", icon: "trash", danger: true,
+                  onClick: async () => {
+                    if (await removeItem(img.libId!)) {
+                      toast("Removed from library", "ok");
+                      void listItems(query, "image", "added").then((r) => setLibImages(r ?? []));
+                    }
+                  },
+                }]
+              : []),
+          ]
+        : []),
     ], img.name);
   };
 
   const deleteSelected = () => {
     if (sel.size === 0) return;
-    toast(`${sel.size} item(s) removed from the demo library (demo only)`, "info");
-    setSel(new Set());
+    if (!isTauri) {
+      toast("The demo gallery is read-only — run the desktop app", "info");
+      setSel(new Set());
+      return;
+    }
+    void (async () => {
+      const ids = [...sel].map((s) => s.replace(/^lib/, "")).map(Number).filter(Number.isFinite);
+      let ok = 0;
+      for (const id of ids) if (await removeItem(id)) ok += 1;
+      toast(`${ok} image${ok === 1 ? "" : "s"} removed from the library`, ok ? "ok" : "info");
+      setSel(new Set());
+      void listItems(query, "image", "added").then((r) => setLibImages(r ?? []));
+    })();
   };
 
   return (
@@ -76,7 +159,7 @@ export function Gallery({ query }: { query: string }) {
         <button className="btn sm" onClick={addImages}>
           <Icon name="plus" size={14} /> Add images
         </button>
-        <button className="btn sm" onClick={() => toast("Folder scanning arrives with the SQLite library (Phase 2)", "info")}>
+        <button className="btn sm accent" onClick={() => navigate("library")}>
           <Icon name="grid" size={14} /> Scan folders
         </button>
       </div>
@@ -108,8 +191,19 @@ export function Gallery({ query }: { query: string }) {
       {items.length === 0 && (
         <div className="empty">
           <Icon name="image" />
-          <div className="t">Nothing here</div>
-          <div className="d">{query ? `No images match "${query}".` : "This folder is empty."}</div>
+          <div className="t">{query ? "No matches" : isTauri && (libImages?.length ?? 0) === 0 ? "No images in the library yet" : "Nothing here"}</div>
+          <div className="d">
+            {query
+              ? `No images match "${query}".`
+              : isTauri && (libImages?.length ?? 0) === 0
+                ? "Add a folder in the Library screen (or rescan) — every photo in your scanned folders shows up here with live previews."
+                : "This folder is empty."}
+          </div>
+          {isTauri && (libImages?.length ?? 0) === 0 && (
+            <button className="btn accent" style={{ marginTop: 12 }} onClick={() => navigate("library")}>
+              <Icon name="folder" size={15} /> Open Library
+            </button>
+          )}
         </div>
       )}
 
@@ -117,7 +211,7 @@ export function Gallery({ query }: { query: string }) {
         <ImageViewer
           src={open.src}
           name={open.name}
-          dims={open.w ? `${open.w}×${open.h} · ${open.size}` : "Added this session"}
+          dims={open.w ? `${open.w}×${open.h} · ${open.size}` : open.size !== "—" ? open.size : "Added this session"}
           onClose={() => setOpenId(null)}
           onPrev={() => openIndex > 0 && setOpenId(items[openIndex - 1].id)}
           onNext={() => openIndex < items.length - 1 && setOpenId(items[openIndex + 1].id)}

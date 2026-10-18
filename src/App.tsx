@@ -5,12 +5,15 @@ import { Toasts } from "./components/Toast";
 import { ContextMenuHost } from "./components/ContextMenu";
 import { ShortcutsModal, SHORTCUT_GROUPS } from "./components/ShortcutsModal";
 import { useRoute, navigate, type Route } from "./lib/router";
-import { getShellInfo, invoke, isTauri } from "./lib/tauri";
+import { getShellInfo, invoke, isTauri, tauriListen } from "./lib/tauri";
 import { initEngine } from "./lib/engine";
 import {
   loadSettings, saveSettings, applySettings,
+  customMedia, externalImage,
   type Settings,
 } from "./lib/store";
+import { fileSrc } from "./lib/library";
+import { playTracks, type AudioTrack } from "./lib/audio";
 import { Home } from "./screens/Home";
 import { Player } from "./screens/Player";
 import { Music, NowPlayingBar } from "./screens/Music";
@@ -92,6 +95,38 @@ export default function App() {
       window.removeEventListener("keydown", on);
       window.removeEventListener("omp:show-keys", onShowKeys);
     };
+  }, []);
+
+  // "Open with OMP" / default-player launches: media files arrive via the
+  // command line (drained once) and via omp://open-path for later launches.
+  useEffect(() => {
+    if (!isTauri) return;
+    const AUDIO = new Set(["mp3", "flac", "m4a", "wav", "ogg", "oga", "opus", "aac", "wma"]);
+    const IMAGE = new Set(["jpg", "jpeg", "png", "webp", "bmp", "gif", "avif", "tif", "tiff"]);
+    const openPath = (p: string) => {
+      if (!p) return;
+      const ext = (p.split(".").pop() || "").toLowerCase();
+      const name = p.split(/[\\/]/).pop() || p;
+      if (AUDIO.has(ext)) {
+        const t: AudioTrack = {
+          id: p, kind: "file", src: p, title: name,
+          artist: "External file", album: "", thumb: "", duration: 0,
+        };
+        playTracks([t], 0);
+        navigate("music");
+      } else if (IMAGE.has(ext)) {
+        externalImage.set({ img: { path: p, name } });
+        navigate("gallery");
+      } else {
+        customMedia.set({ name, url: fileSrc(p), path: p, startAt: 0 });
+        navigate("player");
+      }
+    };
+    void invoke<string[]>("pending_open_paths").then((ps) => ps?.forEach(openPath));
+    let un: (() => void) | undefined;
+    void tauriListen<string>("omp://open-path", openPath).then((fn) => { un = fn; });
+    return () => { un?.(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const update = (patch: Partial<Settings>) => {

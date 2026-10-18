@@ -31,6 +31,9 @@ export type MediaItem = {
   playCount: number;
   lastPlayed: number;
   addedAt: number;
+  artist?: string;
+  album?: string;
+  genre?: string;
 };
 
 export type ScanEvent = {

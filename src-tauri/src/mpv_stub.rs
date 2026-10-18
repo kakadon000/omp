@@ -44,6 +44,29 @@ pub fn mpv_stats() -> Option<EngineStats> {
     None
 }
 
+/// Engine diagnostics stub (real impl in mpv.rs, windows).
+#[derive(Serialize)]
+pub struct EngineDiag {
+    pub available: bool,
+    pub initialized: bool,
+    pub dll_path: String,
+    pub probed_path: String,
+    pub load_error: u32,
+    pub version: Option<String>,
+}
+
+#[tauri::command]
+pub fn mpv_diag() -> EngineDiag {
+    EngineDiag {
+        available: false,
+        initialized: false,
+        dll_path: String::new(),
+        probed_path: String::new(),
+        load_error: 0,
+        version: None,
+    }
+}
+
 #[tauri::command]
 pub fn mpv_set_rect(_x: f64, _y: f64, _w: f64, _h: f64) -> bool {
     false

@@ -10,6 +10,15 @@ import {
   type LibraryStats,
 } from "../lib/library";
 
+type EngineDiag = {
+  available: boolean;
+  initialized: boolean;
+  dll_path: string;
+  probed_path: string;
+  load_error: number;
+  version: string | null;
+};
+
 function Switch({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
   return (
     <label className="switch">
@@ -22,7 +31,7 @@ function Switch({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
 export function Settings({ settings, update }: { settings: Settings; update: (p: Partial<Settings>) => void }) {
   const [stats, setStats] = useState<LibraryStats | null>(null);
   const eng = useSyncExternalStore(engineStore.sub, engineStore.get);
-  const [background, setBackground] = useState(true);
+  const [diag, setDiag] = useState<EngineDiag | null>(null);
 
   // live SQLite stats + scan status
   useEffect(() => {
@@ -32,6 +41,13 @@ export function Settings({ settings, update }: { settings: Settings; update: (p:
       else setStats((s) => (s ? { ...s, scanning: true } : s));
     });
   }, []);
+
+  // v0.6.1: real engine diagnostics — what used to be a vague "missing"
+  // feeling in this screen is now an exact, visible engine status
+  useEffect(() => {
+    if (!isTauri) return;
+    void invoke<EngineDiag>("mpv_diag").then((d) => setDiag(d));
+  }, [eng.available]);
 
   const scanning = !!stats?.scanning;
 
@@ -127,10 +143,13 @@ export function Settings({ settings, update }: { settings: Settings; update: (p:
         <div className="card engine-warn">
           <span className="icon-btn" style={{ color: "var(--warn, #ffb454)" }}><Icon name="alert" /></span>
           <div className="row-main">
-            <div className="row-title">Native mpv engine not detected</div>
+            <div className="row-title">Native mpv engine not active</div>
             <div className="row-desc">
-              This install is missing the bundled engine, so playback falls back to WebView2 (higher CPU).
-              Re-run the latest installer — it closes OMP and repairs locked files automatically.
+              {diag && diag.load_error
+                ? `The bundled engine DLL exists but Windows refused to load it (error ${diag.load_error}). Try: reinstall OMP, allow it in your antivirus, or update your GPU driver.`
+                : diag && diag.dll_path
+                  ? "The engine DLL was found but did not initialise — reinstalling usually fixes this."
+                  : "This install can't find the bundled engine, so playback falls back to WebView2 (higher CPU, fewer formats). Re-run the latest installer — it closes OMP and repairs locked files automatically."}
             </div>
           </div>
         </div>
@@ -173,12 +192,22 @@ export function Settings({ settings, update }: { settings: Settings; update: (p:
             <div className="row-desc">Closing OMP while music plays keeps it going — the desktop widget takes over</div>
           </div>
           <Switch
-            on={background}
+            on={settings.bgPlayback !== false}
             onChange={(v) => {
-              setBackground(v);
+              update({ bgPlayback: v });
               void invoke("set_background_playback", { v });
             }}
           />
+        </div>
+        <div className="row">
+          <span className="icon-btn"><Icon name="rocket" /></span>
+          <div className="row-main">
+            <div className="row-title">Default player</div>
+            <div className="row-desc">OMP registers for videos, music and images — pick it in Windows "Open with", or open Default apps to set it system-wide</div>
+          </div>
+          <button className="btn sm" onClick={() => { void invoke("open_default_apps"); }}>
+            <Icon name="external" size={14} /> Default apps
+          </button>
         </div>
         <div className="row">
           <span className="icon-btn"><Icon name="gauge" /></span>
@@ -252,6 +281,25 @@ export function Settings({ settings, update }: { settings: Settings; update: (p:
           </div>
         </div>
       </div>
+      {isTauri && diag && (
+        <div className="card">
+          <div className="row">
+            <div className="row-main">
+              <div className="row-title">Engine diagnostics</div>
+              <div className="row-desc" style={{ wordBreak: "break-all" }}>
+                {diag.available
+                  ? `libmpv ${diag.version ?? "?"} · ${diag.initialized ? "engine running" : "engine ready (loads on demand)"}${diag.dll_path ? ` · ${diag.dll_path}` : ""}`
+                  : diag.load_error
+                    ? `Engine DLL failed to load (Windows error ${diag.load_error})${diag.probed_path ? ` — ${diag.probed_path}` : ""}. Antivirus quarantine or a missing GPU runtime are the usual causes.`
+                    : "No engine DLL found in this install — reinstall OMP."}
+              </div>
+            </div>
+            <span className="badge" style={diag.available ? { color: "var(--accent)", borderColor: "var(--accent-dim)" } : undefined}>
+              {diag.available ? "OK" : "FAIL"}
+            </span>
+          </div>
+        </div>
+      )}
       <div className="card">
         <div className="row">
           <div className="row-main">
