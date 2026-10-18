@@ -21,6 +21,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use tauri::{AppHandle, Emitter};
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
 
 static CANCEL: AtomicBool = AtomicBool::new(false);
 static CHILD: Mutex<Option<Child>> = Mutex::new(None);
@@ -43,6 +45,7 @@ fn ffmpeg_path() -> Option<std::path::PathBuf> {
 }
 
 /// Diagnostics for Settings: is the export encoder available?
+#[tauri::command]
 pub fn editor_ffmpeg_status() -> Value {
     match ffmpeg_path() {
         Some(p) => serde_json::json!({ "found": true, "path": p.to_string_lossy() }),
@@ -52,6 +55,7 @@ pub fn editor_ffmpeg_status() -> Value {
 
 /// Write one overlay PNG (base64 data URL body or raw base64) to a temp file.
 /// Returns the absolute path; an empty string on failure.
+#[tauri::command]
 pub fn editor_write_png(data_b64: String) -> String {
     let body = data_b64
         .strip_prefix("data:image/png;base64,")
@@ -76,11 +80,13 @@ pub fn editor_write_png(data_b64: String) -> String {
 }
 
 /// Persist an .ompj project file (JSON text) to `path`.
+#[tauri::command]
 pub fn editor_write_project(path: String, json: String) -> bool {
     std::fs::write(&path, json).is_ok()
 }
 
 /// Read an .ompj project file back as raw JSON text.
+#[tauri::command]
 pub fn editor_read_project(path: String) -> Option<String> {
     std::fs::read_to_string(&path).ok()
 }
@@ -96,6 +102,7 @@ fn fmt_f(v: f64) -> String {
 /// Build and spawn the ffmpeg render. `project` is the raw .ompj JSON with
 /// `overlays` pre-filtered to exactly the overlays that were rendered into
 /// `overlays` (same order). Returns false when busy/missing ffmpeg/bad input.
+#[tauri::command]
 pub fn editor_export(
     app: AppHandle,
     project: Value,
@@ -424,6 +431,7 @@ pub fn editor_export(
 }
 
 /// Kill the running export (real process kill).
+#[tauri::command]
 pub fn editor_export_cancel() -> bool {
     CANCEL.store(true, Ordering::SeqCst);
     if let Some(mut c) = CHILD.lock().unwrap().take() {
