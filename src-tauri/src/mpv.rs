@@ -176,74 +176,156 @@ pub(crate) struct MpvApi {
     client_api_version: unsafe extern "C" fn() -> u32,
 }
 
-unsafe fn load_api() -> Option<MpvApi> {
-    // search order: plain names let Windows find the exe-dir copy;
-    // absolute paths cover the `resources/` layout and dev trees
-    let mut libs: Vec<HMODULE> = Vec::new();
-    for name in ["mpv-2.dll", "mpv-1.dll", "libmpv-2.dll", "libmpv.dll"] {
-        let wide = to_wide(name);
-        let h = LoadLibraryW(wide.as_ptr());
-        if h != 0 {
-            libs.push(h);
-            break;
-        }
-    }
-    if libs.is_empty() {
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(dir) = exe.parent() {
-                for rel in ["mpv-2.dll", r"resources\mpv-2.dll", r"..\mpv-2.dll"] {
-                    let p = dir.join(rel);
-                    if p.exists() {
-                        let wide = to_wide(&p.to_string_lossy());
-                        let h = LoadLibraryW(wide.as_ptr());
-                        if h != 0 {
-                            libs.push(h);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    }
-    let m = *libs.first()?;
-    let sym = |name: &str| -> Option<*mut c_void> {
-        let p = GetProcAddress(m, name.as_bytes().as_ptr());
-        if p.is_null() { None } else { Some(p) }
+/// v0.9.0 — the engine loader is now defensive end to end.
+///
+/// WHY: on some machines a DLL that merely shares the name `mpv-2.dll`
+/// (a stale copy in a PATH directory, a security shim, an old partial
+/// install) is found FIRST by the bare-name LoadLibrary search. The old
+/// loader trusted it blindly — no symbol check — and when that file turned
+/// out to have no mpv exports, the engine stayed dead for the whole app
+/// (videos, IPTV, radio, thumbnails) while diagnostics reported the
+/// misleading "DLL found but did not initialise".
+///
+/// NOW: the bundled copy (exe_dir\resources\mpv-2.dll) is tried FIRST and
+/// EVERY candidate must actually export the mpv API before it is accepted.
+/// A rejected module is freed and the next candidate is tried; every
+/// attempt is logged for the Settings diagnostics card.
+pub(crate) struct LoadReport {
+    pub api: Option<MpvApi>,
+    /// the candidate that was accepted ("" when none)
+    pub dll_path: String,
+    /// one human-readable line per candidate, for the diagnostics card
+    pub attempts: Vec<String>,
+    /// last LoadLibraryW winerror (0 = ok)
+    pub last_error: u32,
+}
+
+unsafe fn load_api_logged() -> LoadReport {
+    let mut rep = LoadReport {
+        api: None,
+        dll_path: String::new(),
+        attempts: Vec::new(),
+        last_error: 0,
     };
-    let create: unsafe extern "C" fn() -> *mut MpvHandle = std::mem::transmute(sym("mpv_create")?);
-    let initialize: unsafe extern "C" fn(*mut MpvHandle) -> i32 = std::mem::transmute(sym("mpv_initialize")?);
-    let terminate_destroy: unsafe extern "C" fn(*mut MpvHandle) = std::mem::transmute(sym("mpv_terminate_destroy")?);
-    let set_option_string: unsafe extern "C" fn(*mut MpvHandle, *const c_char, *const c_char) -> i32 =
-        std::mem::transmute(sym("mpv_set_option_string")?);
-    let set_property_string: unsafe extern "C" fn(*mut MpvHandle, *const c_char, *const c_char) -> i32 =
-        std::mem::transmute(sym("mpv_set_property_string")?);
-    let get_property_string: unsafe extern "C" fn(*mut MpvHandle, *const c_char, *mut *mut c_char) -> i32 =
-        std::mem::transmute(sym("mpv_get_property_string")?);
-    let free: unsafe extern "C" fn(*mut c_void) = std::mem::transmute(sym("mpv_free")?);
-    let command: unsafe extern "C" fn(*mut MpvHandle, *const *const c_char) -> i32 =
-        std::mem::transmute(sym("mpv_command")?);
-    let observe_property: unsafe extern "C" fn(*mut MpvHandle, u64, *const c_char, i32) -> i32 =
-        std::mem::transmute(sym("mpv_observe_property")?);
-    let wait_event: unsafe extern "C" fn(*mut MpvHandle, f64) -> *mut MpvEvent =
-        std::mem::transmute(sym("mpv_wait_event")?);
-    let wakeup: unsafe extern "C" fn(*mut MpvHandle) = std::mem::transmute(sym("mpv_wakeup")?);
-    let error_string: unsafe extern "C" fn(i32) -> *const c_char = std::mem::transmute(sym("mpv_error_string")?);
-    let client_api_version: unsafe extern "C" fn() -> u32 = std::mem::transmute(sym("mpv_client_api_version")?);
-    Some(MpvApi {
-        create,
-        initialize,
-        terminate_destroy,
-        set_option_string,
-        set_property_string,
-        get_property_string,
-        free,
-        command,
-        observe_property,
-        wait_event,
-        wakeup,
-        error_string,
-        client_api_version,
-    })
+    let mut candidates: Vec<String> = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            // the AUTHORITATIVE copy: whatever this exact install shipped
+            candidates.push(dir.join(r"resources\mpv-2.dll").to_string_lossy().into_owned());
+            candidates.push(dir.join("mpv-2.dll").to_string_lossy().into_owned());
+        }
+    }
+    // then the generic search (dev trees, PATH copies)
+    candidates.push("mpv-2.dll".to_string());
+    candidates.push("libmpv-2.dll".to_string());
+    candidates.push("mpv-1.dll".to_string());
+    candidates.push("libmpv.dll".to_string());
+
+    for spec in candidates {
+        let is_path = spec.contains('\\') || spec.contains('/');
+        if is_path && !std::path::Path::new(&spec).is_file() {
+            continue; // this install layout doesn't exist on this machine
+        }
+        let wide = to_wide(&spec);
+        let h = LoadLibraryW(wide.as_ptr());
+        if h == 0 {
+            let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(0);
+            rep.last_error = e;
+            rep.attempts
+                .push(format!("{spec} → load refused by Windows (winerror {e})"));
+            continue;
+        }
+        let has_sym = |n: &str| {
+            let mut b = n.as_bytes().to_vec();
+            b.push(0);
+            !GetProcAddress(h, b.as_ptr()).is_null()
+        };
+        let required = [
+            "mpv_create",
+            "mpv_initialize",
+            "mpv_terminate_destroy",
+            "mpv_set_option_string",
+            "mpv_set_property_string",
+            "mpv_get_property_string",
+            "mpv_free",
+            "mpv_command",
+            "mpv_observe_property",
+            "mpv_wait_event",
+            "mpv_wakeup",
+            "mpv_error_string",
+            "mpv_client_api_version",
+        ];
+        let missing: Vec<&str> = required.iter().copied().filter(|n| !has_sym(n)).collect();
+        if !missing.is_empty() {
+            FreeLibrary(h);
+            rep.attempts.push(format!(
+                "{spec} → loaded but exports no mpv API (foreign or corrupt copy — rejected, {})",
+                if missing.len() > 3 {
+                    format!("missing {} symbols", missing.len())
+                } else {
+                    format!("missing: {}", missing.join(", "))
+                }
+            ));
+            continue;
+        }
+        let m = h;
+        let sym = |name: &str| -> Option<*mut c_void> {
+            let p = GetProcAddress(m, name.as_bytes().as_ptr());
+            if p.is_null() { None } else { Some(p) }
+        };
+        // every symbol above was verified — transmutes cannot fail here
+        let create: unsafe extern "C" fn() -> *mut MpvHandle =
+            std::mem::transmute(sym("mpv_create").unwrap_unchecked());
+        let initialize: unsafe extern "C" fn(*mut MpvHandle) -> i32 =
+            std::mem::transmute(sym("mpv_initialize").unwrap_unchecked());
+        let terminate_destroy: unsafe extern "C" fn(*mut MpvHandle) =
+            std::mem::transmute(sym("mpv_terminate_destroy").unwrap_unchecked());
+        let set_option_string: unsafe extern "C" fn(*mut MpvHandle, *const c_char, *const c_char) -> i32 =
+            std::mem::transmute(sym("mpv_set_option_string").unwrap_unchecked());
+        let set_property_string: unsafe extern "C" fn(*mut MpvHandle, *const c_char, *const c_char) -> i32 =
+            std::mem::transmute(sym("mpv_set_property_string").unwrap_unchecked());
+        let get_property_string: unsafe extern "C" fn(*mut MpvHandle, *const c_char, *mut *mut c_char) -> i32 =
+            std::mem::transmute(sym("mpv_get_property_string").unwrap_unchecked());
+        let free: unsafe extern "C" fn(*mut c_void) =
+            std::mem::transmute(sym("mpv_free").unwrap_unchecked());
+        let command: unsafe extern "C" fn(*mut MpvHandle, *const *const c_char) -> i32 =
+            std::mem::transmute(sym("mpv_command").unwrap_unchecked());
+        let observe_property: unsafe extern "C" fn(*mut MpvHandle, u64, *const c_char, i32) -> i32 =
+            std::mem::transmute(sym("mpv_observe_property").unwrap_unchecked());
+        let wait_event: unsafe extern "C" fn(*mut MpvHandle, f64) -> *mut MpvEvent =
+            std::mem::transmute(sym("mpv_wait_event").unwrap_unchecked());
+        let wakeup: unsafe extern "C" fn(*mut MpvHandle) =
+            std::mem::transmute(sym("mpv_wakeup").unwrap_unchecked());
+        let error_string: unsafe extern "C" fn(i32) -> *const c_char =
+            std::mem::transmute(sym("mpv_error_string").unwrap_unchecked());
+        let client_api_version: unsafe extern "C" fn() -> u32 =
+            std::mem::transmute(sym("mpv_client_api_version").unwrap_unchecked());
+        rep.attempts.push(format!("{spec} → OK, mpv API verified"));
+        rep.dll_path = spec;
+        rep.api = Some(MpvApi {
+            create,
+            initialize,
+            terminate_destroy,
+            set_option_string,
+            set_property_string,
+            get_property_string,
+            free,
+            command,
+            observe_property,
+            wait_event,
+            wakeup,
+            error_string,
+            client_api_version,
+        });
+        return rep;
+    }
+    rep.attempts
+        .push("no candidate engine DLL could be verified — reinstall OMP so the bundled engine lands in resources\\".into());
+    rep
+}
+
+unsafe fn load_api() -> Option<MpvApi> {
+    load_api_logged().api
 }
 
 /// Engine API cache. A Mutex (not OnceLock) so `mpv_retest` can CLEAR it:
@@ -649,7 +731,7 @@ pub fn mpv_attach(app: AppHandle, hwdec: Option<String>, show: Option<bool>) -> 
 
     let Some(a) = api() else { return st };
     unsafe {
-        let h = (a.create)();
+        let mut h = (a.create)();
         if h.is_null() {
             if hwnd != 0 {
                 DestroyWindow(hwnd);
@@ -663,67 +745,103 @@ pub fn mpv_attach(app: AppHandle, hwdec: Option<String>, show: Option<bool>) -> 
             let wid_str: CString = CString::new(hwnd.to_string()).unwrap();
             (a.set_option_string)(h, n_wid.as_ptr(), wid_str.as_ptr());
         }
-        for (k, v) in [
+        // v0.9.0: bundled yt-dlp → native playback of YouTube and 1000+ other
+        // sites straight through mpv (hardware-decoded, VLC-grade controls).
+        // Format is capped at 1080p and prefers h264 so hardware decode
+        // engages on virtually every GPU — no more software-decode CPU burn.
+        let ytdlp = crate::ytdlp_path();
+        let mut opts: Vec<(&str, String)> = vec![
             // v0.6.2 CRITICAL FIX: idle=yes. mpv's default (idle=no) makes an
             // EMPTY core shut itself down right after initialization — the
             // classic libmpv trap. Audio attaches happened WITHOUT a file, so
             // the core died before the first loadfile ever arrived and every
             // music session was born dead on affected builds.
-            ("idle", "yes"),
-            ("osc", "no"),
-            ("osd-level", "0"),
-            ("input-default-bindings", "no"),
-            ("input-vo-keyboard", "no"),
-            ("input-cursor", "no"),
-            ("cursor-autohide", "no"),
-            ("keep-open", "no"),
-            ("sub-auto", "fuzzy"),
-            ("audio-file-auto", "fuzzy"),
-            ("ytdl", "no"),
-            ("terminal", "no"),
-            ("msg-level", "all=warn"),
-        ] {
-            let n = CString::new(k).unwrap();
-            let v = CString::new(v).unwrap();
-            (a.set_option_string)(h, n.as_ptr(), v.as_ptr());
+            ("idle", "yes".into()),
+            ("osc", "no".into()),
+            ("osd-level", "0".into()),
+            ("input-default-bindings", "no".into()),
+            ("input-cursor", "no".into()),
+            ("cursor-autohide", "no".into()),
+            ("keep-open", "no".into()),
+            ("sub-auto", "fuzzy".into()),
+            ("audio-file-auto", "fuzzy".into()),
+            ("terminal", "no".into()),
+            ("msg-level", "all=warn".into()),
+        ];
+        if let Some(p) = &ytdlp {
+            let fwd = p.to_string_lossy().replace('\\', "/");
+            opts.push(("ytdl", "yes".into()));
+            opts.push(("script-opts", format!("ytdl_hook-ytdl_path={fwd}")));
+            opts.push((
+                "ytdl-format",
+                "bestvideo[height<=?1080][vcodec^=avc1]+bestaudio/bestvideo[height<=?1080]+bestaudio/best[height<=?720]/best".into(),
+            ));
+        } else {
+            opts.push(("ytdl", "no".into()));
         }
         if video {
-            for (k, v) in [
-                ("vo", "gpu-next,gpu"),
-                // "auto-safe" refuses hwdec on non-whitelisted drivers → silent
-                // software decode → CPU burn. "auto" still falls back to SW when
-                // genuinely unsupported, but takes the GPU path far more often.
-                ("hwdec", hwdec.as_deref().unwrap_or("auto")),
-                ("hwdec-codecs", "all"),
-                // software-decode fast paths (no-ops when hardware decode engages)
-                ("vd-lavc-fast", "yes"),
-                ("vd-lavc-skiploopfilter", "nonref"),
-            ] {
-                let n = CString::new(k).unwrap();
-                let v = CString::new(v).unwrap();
-                (a.set_option_string)(h, n.as_ptr(), v.as_ptr());
-            }
+            opts.push(("vo", "gpu-next,gpu".into()));
+            // "auto-safe" refuses hwdec on non-whitelisted drivers → silent
+            // software decode → CPU burn. "auto" still falls back to SW when
+            // genuinely unsupported, but takes the GPU path far more often.
+            opts.push(("hwdec", hwdec.as_deref().unwrap_or("auto").into()));
+            opts.push(("hwdec-codecs", "all".into()));
+            // software-decode fast paths (no-ops when hardware decode engages)
+            opts.push(("vd-lavc-fast", "yes".into()));
+            opts.push(("vd-lavc-skiploopfilter", "nonref".into()));
         } else {
-            for (k, v) in [
-                // surface-less audio: no video output at all, no album-art window
-                ("vo", "null"),
-                ("audio-display", "no"),
-                ("force-window", "no"),
-            ] {
-                let n = CString::new(k).unwrap();
-                let v = CString::new(v).unwrap();
-                (a.set_option_string)(h, n.as_ptr(), v.as_ptr());
-            }
+            // surface-less audio: no video output at all, no album-art window
+            opts.push(("vo", "null".into()));
+            opts.push(("audio-display", "no".into()));
+            opts.push(("force-window", "no".into()));
         }
-        let code = (a.initialize)(h);
+        for (k, v) in &opts {
+            let n = CString::new(*k).unwrap();
+            let v = CString::new(v.as_str()).unwrap();
+            (a.set_option_string)(h, n.as_ptr(), v.as_ptr());
+        }
+        let mut code = (a.initialize)(h);
         if code != 0 {
-            let why = err_str(&a, code);
+            let why_full = err_str(&a, code);
             (a.terminate_destroy)(h);
-            if hwnd != 0 {
-                DestroyWindow(hwnd);
+            // v0.9.0: retry with the BARE minimum option set. A tuned option
+            // this particular DLL rejects (removed/renamed options across
+            // mpv builds, GPU-adjacent defaults) used to kill the whole
+            // engine permanently; the retry isolates option problems from
+            // real engine failures and keeps the app playable either way.
+            h = (a.create)();
+            let mut min_ok = false;
+            if !h.is_null() {
+                if video {
+                    let n_wid = CString::new("wid").unwrap();
+                    let wid_str: CString = CString::new(hwnd.to_string()).unwrap();
+                    (a.set_option_string)(h, n_wid.as_ptr(), wid_str.as_ptr());
+                }
+                for (k, v) in [("idle", "yes"), ("terminal", "no"), ("osc", "no")] {
+                    let n = CString::new(k).unwrap();
+                    let v = CString::new(v).unwrap();
+                    (a.set_option_string)(h, n.as_ptr(), v.as_ptr());
+                }
+                code = (a.initialize)(h);
+                min_ok = code == 0;
             }
-            st.error = Some(format!("mpv_initialize failed: {why}"));
-            return st;
+            if !min_ok {
+                let why_min = if h.is_null() {
+                    "mpv_create failed on the retry".to_string()
+                } else {
+                    err_str(&a, code)
+                };
+                if !h.is_null() {
+                    (a.terminate_destroy)(h);
+                }
+                if hwnd != 0 {
+                    DestroyWindow(hwnd);
+                }
+                st.error = Some(format!(
+                    "mpv_initialize failed: {why_full} · minimal-options retry: {why_min}"
+                ));
+                return st;
+            }
         }
         let n = CString::new("time-pos").unwrap();
         (a.observe_property)(h, 1, n.as_ptr(), FMT_DOUBLE);
@@ -843,65 +961,37 @@ pub struct EngineDiag {
     pub probed_path: String, // the candidate we tried last in this call
     pub load_error: u32,     // GetLastError of the failed LoadLibraryW (0 = ok)
     pub version: Option<String>,
+    /// v0.9.0 — one line per loader candidate: accepted / rejected / refused.
+    /// Turns the old one-bit verdict into a readable trail ("DLL found but
+    /// did not initialise" now says WHICH file was loaded and WHY it failed).
+    pub attempts: Vec<String>,
 }
 
 #[tauri::command]
 pub fn mpv_diag() -> EngineDiag {
     #[cfg(windows)]
     unsafe {
-        // nested fn (not a closure): closures keep their captures borrowed
-        // until end of scope, which clashed with reading the results below.
-        unsafe fn try_load(
-            path: &str,
-            probed: &mut String,
-            loaded: &mut Option<String>,
-            last_err: &mut u32,
-        ) -> bool {
-            *probed = path.to_string();
-            let wide = to_wide(path);
-            let h = LoadLibraryW(wide.as_ptr());
-            if h != 0 {
-                *loaded = Some(path.to_string());
-                FreeLibrary(h);
-                true
-            } else {
-                // std's last_os_error is the reliable GetLastError read
-                *last_err = std::io::Error::last_os_error()
-                    .raw_os_error()
-                    .unwrap_or(0) as u32;
-                false
-            }
-        }
-
-        let mut last_err: u32 = 0;
-        let mut probed = String::new();
-        let mut loaded: Option<String> = None;
-
-        // re-probe every candidate WITHOUT caching, purely for diagnostics
-        try_load("mpv-2.dll", &mut probed, &mut loaded, &mut last_err);
-        if loaded.is_none() {
-            if let Ok(exe) = std::env::current_exe() {
-                if let Some(dir) = exe.parent() {
-                    for rel in ["mpv-2.dll", "resources\\mpv-2.dll", "..\\mpv-2.dll"] {
-                        let p = dir.join(rel);
-                        if p.exists()
-                            && try_load(&p.to_string_lossy(), &mut probed, &mut loaded, &mut last_err)
-                        {
-                            break;
-                        }
-                    }
+        // v0.9.0: run the SAME defensive loader the app uses and surface its
+        // full attempt trail. A successful fresh load also self-heals the
+        // cached API (covers "environment repaired after boot" without a
+        // manual Re-test).
+        let rep = load_api_logged();
+        if rep.api.is_some() {
+            if let Ok(mut g) = API.lock() {
+                if g.is_none() {
+                    *g = rep.api.map(Arc::new);
                 }
             }
         }
-
         let a = api();
         EngineDiag {
             available: a.is_some(),
             initialized: MPV.lock().map(|g| g.is_some()).unwrap_or(false),
-            dll_path: loaded.unwrap_or_default(),
-            probed_path: probed,
-            load_error: if a.is_some() { 0 } else { last_err },
+            dll_path: rep.dll_path,
+            probed_path: rep.attempts.last().cloned().unwrap_or_default(),
+            load_error: if a.is_some() { 0 } else { rep.last_error },
             version: a.map(|a| api_version_string((a.client_api_version)())),
+            attempts: rep.attempts,
         }
     }
     #[cfg(not(windows))]
@@ -913,6 +1003,7 @@ pub fn mpv_diag() -> EngineDiag {
             probed_path: String::new(),
             load_error: 0,
             version: None,
+            attempts: Vec::new(),
         }
     }
 }
@@ -1001,6 +1092,13 @@ pub fn mpv_set_rect(app: AppHandle, x: f64, y: f64, w: f64, h: f64) -> bool {
 
 #[tauri::command]
 pub fn mpv_load(source: String, start: Option<f64>) -> bool {
+    // v0.9.0: without the bundled extractor a YouTube URL would be fed to
+    // the demuxer as raw HTML — a pointless spin and a wall of junk errors.
+    // Refuse it cleanly; the UI routes YouTube links to the embed path when
+    // native playback isn't available.
+    if crate::is_youtube_url(&source) && crate::ytdlp_path().is_none() {
+        return false;
+    }
     let path = resolve_media(&source);
     with_instance(|inst, a| unsafe {
         if let Some(s) = start {

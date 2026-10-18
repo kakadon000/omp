@@ -59,6 +59,7 @@ pub struct EngineDiag {
     pub probed_path: String,
     pub load_error: u32,
     pub version: Option<String>,
+    pub attempts: Vec<String>,
 }
 
 #[tauri::command]
@@ -70,6 +71,7 @@ pub fn mpv_diag() -> EngineDiag {
         probed_path: String::new(),
         load_error: 0,
         version: None,
+        attempts: Vec::new(),
     }
 }
 

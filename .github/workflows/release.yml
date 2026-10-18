@@ -67,9 +67,15 @@ jobs:
           # forwarding the bearer token breaks the signed request
           Invoke-WebRequest -Uri $asset.browser_download_url -OutFile mpv-dev.7z -Headers @{ "User-Agent" = "omp-ci-build" }
           7z x mpv-dev.7z -ompvdev | Out-Null
-          # zhongfly builds ship the engine as libmpv-2.dll (flat archive)
-          $dll = Get-ChildItem -Recurse -Filter *.dll mpvdev | Select-Object -First 1
+          # zhongfly builds ship the engine as libmpv-2.dll (flat archive).
+          # v0.9.0: pick it by NAME (never "first dll found"), verify the size
+          # so a renamed/wrong artifact can never ship as the engine again.
+          $dll = Get-ChildItem -Recurse -Filter "libmpv-2.dll" mpvdev | Select-Object -First 1
+          if (-not $dll) {
+            $dll = Get-ChildItem -Recurse -Filter *.dll mpvdev | Sort-Object Length -Descending | Select-Object -First 1
+          }
           if (-not $dll) { throw "no dll found in mpv-dev archive" }
+          if ($dll.Length -lt 20MB) { throw "engine dll suspiciously small ($($dll.Length) bytes) — refusing to stage it" }
           Copy-Item $dll.FullName src-tauri/resources/mpv-2.dll
           Write-Host "Engine dll: $($dll.Name) ($([math]::Round($dll.Length/1MB,1)) MB)"
           # 3) bundle ffmpeg for the Phase 4 editor export pipeline
@@ -97,6 +103,14 @@ jobs:
           }
           $fflen = (Get-Item src-tauri/resources/ffmpeg.exe).Length
           Write-Host "FFmpeg: $([math]::Round($fflen/1MB,1)) MB"
+          # 4) bundle yt-dlp — the built-in YouTube extractor (v0.9.0):
+          #    keyless search (online_yt_search) + native mpv playback of
+          #    YouTube and 1000+ other sites via the ytdl hook
+          curl.exe -sSL --fail --retry 5 --retry-delay 5 -A omp-ci-build -o src-tauri/resources/yt-dlp.exe "https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp.exe"
+          if (-not (Test-Path src-tauri/resources/yt-dlp.exe)) { throw "yt-dlp.exe did not land in resources" }
+          $ylen = (Get-Item src-tauri/resources/yt-dlp.exe).Length
+          if ($ylen -lt 10MB) { throw "yt-dlp.exe suspiciously small ($ylen bytes)" }
+          Write-Host "yt-dlp: $([math]::Round($ylen/1MB,1)) MB"
           Write-Host "Staged resources:"
           Get-ChildItem -Recurse src-tauri/resources | Select-Object FullName, Length
 
@@ -107,6 +121,6 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "OMP ${{ github.ref_name }}"
-          releaseBody: "Every Format. One Player. Open to All. — v0.8.1: the audio-chain fix round. Root cause found for the track-switch chaos: mpv's end-of-file events for ordinary transitions (Stop, switching to the next song) were surfacing as errors — every track change fired a fake \"Playback failed\" toast and armed an auto-skip timer that machine-gunned through the queue. Only real decode errors surface as errors now; Stop and track switches are silent. Also: a dead engine no longer leaves the UI claiming playback (press play and it rebuilds with the current track), the web fallback can no longer double-play under the native engine, live radio streams auto-reconnect once when a station drops and stop honestly instead of faking ON AIR, and Settings gained a one-click Copy diagnostics button — paste it in a bug report and the broken leg of the chain is instantly visible. Download the Windows installer below."
+          releaseBody: "Every Format. One Player. Open to All. — v0.9.0: the engine that always starts, plus built-in YouTube. THE ENGINE FIX: on some machines a foreign DLL sharing the name mpv-2.dll was loaded first and trusted blindly — it had no mpv exports, so the engine (and with it videos, IPTV, radio, and library thumbnails) stayed dead while Settings said "DLL found but did not initialise". Every loader candidate is now symbol-verified before acceptance, the bundled resources\\mpv-2.dll is tried first, rejected modules are freed and skipped, and if the full option set is refused the engine retries with a bare minimum set. The exact attempt trail now shows in Settings and Copy diagnostics. BUILT-IN YOUTUBE: OMP bundles yt-dlp — search works out of the box with no API key, and with a healthy engine, pasted YouTube links and search results play NATIVELY in OMP: hardware decoded, capped at 1080p with h264 preferred so hardware decode engages, VLC-grade controls, a fraction of the WebView embed's CPU. The same extractor adds native playback for 1000+ sites (Twitter/X, TikTok, Instagram, Vimeo, Twitch, Bilibili, SoundCloud...). The embed player remains as fallback with a one-click Native player upgrade. ALSO: video thumbnails/durations/tags now fall back to bundled FFmpeg when mpv probing is unavailable — previews no longer depend on the engine — and YouTube URLs without the extractor are refused cleanly instead of spinning the demuxer. Download the Windows installer below."
           releaseDraft: false
           prerelease: false

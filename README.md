@@ -27,6 +27,36 @@ distinctive, not into reinventing video decoding.
 - **Theme Studio** — dark/light/system, five tasteful accents, adjustable
   transparency, Reduced Effects for low-end PCs.
 
+## What's new in v0.9.0 — the engine that always starts + built-in YouTube
+
+- **The engine loader is now defensive end to end.** On some machines a
+  foreign DLL that merely shares the name `mpv-2.dll` was loaded first and
+  trusted blindly — no mpv exports, engine dead, and every downstream
+  feature (videos, IPTV, radio, thumbnails) silently broken while Settings
+  said "DLL found but did not initialise". Every loader candidate is now
+  symbol-verified before acceptance, the bundled `resources\mpv-2.dll` is
+  tried FIRST, and rejected modules are freed and skipped. If the full
+  tuned option set is refused, the engine retries with a bare minimum set
+  before giving up — and the exact failure reason lands in diagnostics.
+- **Built-in YouTube — no API key needed.** OMP now bundles yt-dlp: search
+  YouTube out of the box (Settings → Online shows the extractor status),
+  and when the native engine is healthy, pasted links and search results
+  play **natively in OMP** — hardware decoded, VLC-grade controls, a
+  fraction of the WebView embed's CPU. The embed remains as fallback with
+  a one-click "Native player" upgrade button.
+- **All-format URL support.** The same extractor teaches mpv YouTube,
+  Twitter/X, TikTok, Instagram, Vimeo, Twitch VODs, Bilibili, SoundCloud
+  and 1000+ other sites — paste any link, OMP plays it. Formats are capped
+  at 1080p with h264 preferred so hardware decode engages on every GPU.
+- **Video previews that never depend on the engine.** Library thumbnails,
+  durations, resolutions and tags now fall back to the bundled FFmpeg when
+  mpv probing is unavailable — previews work on every machine.
+- **YouTube links can no longer spin the demuxer.** Without the extractor,
+  YouTube URLs are refused cleanly instead of being fed to mpv as raw HTML.
+- **Diagnostics that actually explain.** The engine card and Copy
+  diagnostics now include the full loader attempt trail (which file was
+  accepted, rejected, or refused and why) plus the extractor state.
+
 ## What's new in v0.8.1 — the audio-chain fix round
 
 - **Track-switch chaos: root cause removed.** mpv fires an end-of-file event
@@ -321,7 +351,7 @@ at 1 Hz *only while the overlay is open* — zero idle timers, per spec).
 | Images           | libvips (Phase 2)              |
 | Database         | SQLite (Phase 2)               |
 | Project format   | JSON-based `.ompj` (Phase 4)   |
-| Online playback  | YouTube nocookie embeds + mpv streams |
+| Online playback  | YouTube nocookie embeds + bundled yt-dlp → native mpv (1000+ sites) |
 
 ## Development
 

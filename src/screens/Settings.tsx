@@ -7,7 +7,7 @@ import { navigate } from "../lib/router";
 import { engineStore, initEngine } from "../lib/engine";
 import { resetEngineProbe, audioDiag } from "../lib/audio";
 import { ffmpegStatus } from "../lib/editor";
-import { loadYtKey, saveYtKey, ytTestKey, loadChannels } from "../lib/online";
+import { loadYtKey, saveYtKey, ytTestKey, loadChannels, ytdlpStatus } from "../lib/online";
 import {
   getStats, rescan as libRescan, cancelScan, onScanEvent,
   type LibraryStats,
@@ -20,6 +20,7 @@ type EngineDiag = {
   probed_path: string;
   load_error: number;
   version: string | null;
+  attempts?: string[];
 };
 
 /** Human-readable hints for the Win32 LoadLibrary error codes users hit. */
@@ -54,6 +55,7 @@ export function Settings({ settings, update }: { settings: SettingsShape; update
   const eng = useSyncExternalStore(engineStore.sub, engineStore.get);
   const [diag, setDiag] = useState<EngineDiag | null>(null);
   const [ffFound, setFfFound] = useState<{ found: boolean; path: string } | null>(null);
+  const [ytdlp, setYtdlp] = useState<{ available: boolean; path: string } | null>(null);
   const [key, setKey] = useState(() => loadYtKey());
   const [keyMsg, setKeyMsg] = useState("");
   const [testing, setTesting] = useState(false);
@@ -80,6 +82,7 @@ export function Settings({ settings, update }: { settings: SettingsShape; update
     if (!isTauri) return;
     void invoke<EngineDiag>("mpv_diag").then((d) => setDiag(d));
     void ffmpegStatus().then(setFfFound);
+    void ytdlpStatus().then(setYtdlp);
   }, [eng.available]);
 
   const scanning = !!stats?.scanning;
@@ -203,6 +206,11 @@ export function Settings({ settings, update }: { settings: SettingsShape; update
                 : diag && diag.dll_path
                   ? "The engine DLL was found but did not initialise — reinstalling usually fixes this. Music still plays via the built-in audio engine."
                   : "This install can't find the bundled engine. Music still plays via the built-in audio engine; videos fall back to WebView2 (higher CPU, fewer formats). Re-run the latest installer — it closes OMP and repairs locked files automatically."}
+              {diag && diag.attempts && diag.attempts.length > 0 && (
+                <span style={{ display: "block", marginTop: 6, fontFamily: "var(--mono, monospace)", fontSize: 11, color: "var(--text-3)" }}>
+                  {diag.attempts.join(" · ")}
+                </span>
+              )}
             </div>
           </div>
           <button className="btn sm" disabled={retesting} onClick={() => void retestEngine()}>
@@ -250,6 +258,7 @@ export function Settings({ settings, update }: { settings: SettingsShape; update
                   shell,
                   engine: eng,
                   engineDiag: d,
+                  ytdlp,
                   audio: audioDiag(),
                 };
                 await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
@@ -285,6 +294,22 @@ export function Settings({ settings, update }: { settings: SettingsShape; update
             <div className="row-desc">Use the GPU when available · software decoding fallback stays on</div>
           </div>
           <Switch on={settings.hwAccel} onChange={(v) => update({ hwAccel: v })} />
+        </div>
+        <div className="row">
+          <span className="icon-btn"><Icon name="download" /></span>
+          <div className="row-main">
+            <div className="row-title">YouTube extractor · yt-dlp</div>
+            <div className="row-desc" style={{ wordBreak: "break-all" }}>
+              {ytdlp === null
+                ? "Checking…"
+                : ytdlp.available
+                  ? `Built in — keyless YouTube search + native playback of YouTube and 1000+ sites (${ytdlp.path})`
+                  : "Not found — reinstall the latest OMP for keyless search and native YouTube playback"}
+            </div>
+          </div>
+          <span className={`chip ${ytdlp?.available ? "" : "kf-chip"}`} style={ytdlp ? { color: ytdlp.available ? "var(--accent)" : "var(--warn, #ffb454)" } : undefined}>
+            {ytdlp ? (ytdlp.available ? "ready" : "missing") : "…"}
+          </span>
         </div>
         <div className="row">
           <span className="icon-btn"><Icon name="music" /></span>
@@ -345,8 +370,9 @@ export function Settings({ settings, update }: { settings: SettingsShape; update
           <div className="row-main">
             <div className="row-title">YouTube Data API key</div>
             <div className="row-desc">
-              Unlocks YouTube search on the Online screen — free tier is 10,000 units/day
-              (~5,000 searches). The key stays in this browser profile, never uploaded.
+              Optional — search already works out of the box through the built-in extractor. A key makes
+              search faster and richer (durations, view counts); free tier is 10,000 units/day (~5,000
+              searches). The key stays in this browser profile, never uploaded.
               {" "}
               <button
                 className="btn ghost sm"

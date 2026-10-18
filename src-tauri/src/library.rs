@@ -330,11 +330,22 @@ fn run_scan(app: AppHandle, db_path: PathBuf, thumbs: PathBuf) {
         // whatever jpg lands there — deterministic and version-proof.
         let tmp_dir = thumbs.join(format!("t{}", hash64(path)));
         let _ = std::fs::remove_dir_all(&tmp_dir);
+        // v0.9.0: primary probe = libmpv. When the engine is unavailable on
+        // this machine (refused DLL — the "nothing works" failure mode), the
+        // bundled ffmpeg.exe extracts the same metadata + thumbnails so
+        // previews and durations NEVER depend on the engine loading.
         let meta = crate::mpv::probe_media(
             path,
             if want_thumb { Some(tmp_dir.as_path()) } else { None },
             is_audio,
-        );
+        )
+        .or_else(|| {
+            crate::editor::ffmpeg_probe(
+                path,
+                if want_thumb { Some(tmp_dir.as_path()) } else { None },
+                is_audio,
+            )
+        });
         let mut thumb_name = String::new();
         if let Some(m) = &meta {
             if m.thumb {

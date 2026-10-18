@@ -372,6 +372,171 @@ fn open_url(url: String) -> bool {
     }
 }
 
+/// v0.9.0 — locate the BUNDLED yt-dlp extractor (exe dir / resources layout).
+/// Also shared with mpv.rs: when present, the engine gets native playback of
+/// YouTube and 1000+ other sites through mpv's ytdl hook.
+pub(crate) fn ytdlp_path() -> Option<std::path::PathBuf> {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            for rel in [r"resources\yt-dlp.exe", "yt-dlp.exe"] {
+                let p = dir.join(rel);
+                if p.is_file() {
+                    return Some(p);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// v0.9.0 — YouTube / youtu.be link detector (for clean refusals when the
+/// extractor is missing, instead of feeding HTML to the demuxer).
+pub(crate) fn is_youtube_url(s: &str) -> bool {
+    let l = s.trim().to_ascii_lowercase();
+    (l.starts_with("http://") || l.starts_with("https://"))
+        && (l.contains("youtube.com/") || l.contains("youtu.be/"))
+}
+
+/// v0.9.0 — extractor availability for Settings + the Online screen.
+#[derive(serde::Serialize)]
+pub struct YtdlpStatus {
+    pub available: bool,
+    pub path: String,
+}
+
+#[tauri::command]
+fn online_ytdlp_status() -> YtdlpStatus {
+    match ytdlp_path() {
+        Some(p) => YtdlpStatus {
+            available: true,
+            path: p.to_string_lossy().into_owned(),
+        },
+        None => YtdlpStatus {
+            available: false,
+            path: String::new(),
+        },
+    }
+}
+
+/// v0.9.0 — keyless YouTube search through the bundled yt-dlp:
+/// `yt-dlp --flat-playlist --dump-json "ytsearchN:query"` → one JSON line per
+/// result. Runs with a hard timeout so a dead network can't hang the UI.
+#[tauri::command]
+fn online_yt_search(query: String, max: Option<u32>) -> Result<String, String> {
+    let exe = ytdlp_path().ok_or_else(|| "yt-dlp is not bundled in this install".to_string())?;
+    let q = query.trim();
+    if q.is_empty() {
+        return Err("empty query".into());
+    }
+    let n = max.unwrap_or(20).clamp(1, 40);
+    use std::io::Read;
+    use std::process::Stdio;
+    #[cfg(windows)]
+    let mut child = {
+        use std::os::windows::process::CommandExt;
+        std::process::Command::new(&exe)
+            .args([
+                "--flat-playlist",
+                "--dump-json",
+                "--no-warnings",
+                "--quiet",
+                "--no-progress",
+                &format!("ytsearch{}:{}", n, q),
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .stdin(Stdio::null())
+            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+            .spawn()
+            .map_err(|e| format!("could not start yt-dlp: {e}"))?
+    };
+    #[cfg(not(windows))]
+    let mut child = std::process::Command::new(&exe)
+        .args([
+            "--flat-playlist",
+            "--dump-json",
+            "--no-warnings",
+            "--quiet",
+            "--no-progress",
+            &format!("ytsearch{}:{}", n, q),
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .stdin(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("could not start yt-dlp: {e}"))?;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(45);
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "could not read the extractor output".to_string())?;
+    let mut buf = String::new();
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let _ = stdout.read_to_string(&mut buf);
+                if !status.success() && buf.trim().is_empty() {
+                    return Err(format!("yt-dlp exited with {status}"));
+                }
+                break;
+            }
+            Ok(None) => {
+                if std::time::Instant::now() > deadline {
+                    let _ = child.kill();
+                    return Err("search timed out (network too slow?)".into());
+                }
+                // drain incrementally so a chatty pipe can't deadlock
+                let mut chunk = [0u8; 8192];
+                match stdout.read(&mut chunk) {
+                    Ok(0) => std::thread::sleep(std::time::Duration::from_millis(60)),
+                    Ok(k) => buf.push_str(&String::from_utf8_lossy(&chunk[..k])),
+                    Err(_) => std::thread::sleep(std::time::Duration::from_millis(60)),
+                }
+            }
+            Err(e) => return Err(format!("yt-dlp wait failed: {e}")),
+        }
+    }
+
+    // flat-playlist entries → the same shape the YouTube Data API path emits
+    let mut out: Vec<serde_json::Value> = Vec::new();
+    for line in buf.lines() {
+        let l = line.trim();
+        if !l.starts_with('{') {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(l) else {
+            continue;
+        };
+        let id = v["id"].as_str().unwrap_or("").to_string();
+        if id.is_empty() {
+            continue;
+        }
+        let url = v["url"]
+            .as_str()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("https://www.youtube.com/watch?v={id}"));
+        out.push(serde_json::json!({
+            "id": id,
+            "title": v["title"].as_str().unwrap_or("Untitled"),
+            "thumb": format!("https://i.ytimg.com/vi/{id}/hqdefault.jpg"),
+            "duration": v["duration"].as_f64().unwrap_or(0.0),
+            "views": v["view_count"].as_u64().unwrap_or(0),
+            "channel": v["channel"]
+                .as_str()
+                .or_else(|| v["uploader"].as_str())
+                .unwrap_or(""),
+            "published": "",
+            "live": v["is_live"].as_bool().unwrap_or(false),
+            "url": url,
+        }));
+    }
+    if out.is_empty() {
+        return Err("no results (or the extractor could not reach YouTube)".into());
+    }
+    serde_json::to_string(&out).map_err(|e| e.to_string())
+}
+
 pub fn run() {
     tauri::Builder::default()
         // MUST be the first plugin: catches second launches (double-clicking
@@ -453,6 +618,8 @@ pub fn run() {
             open_default_apps,
             online_read_file,
             open_url,
+            online_ytdlp_status,
+            online_yt_search,
             mpv::mpv_diag
         ])
         .on_window_event(|window, event| {

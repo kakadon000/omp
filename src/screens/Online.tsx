@@ -4,6 +4,7 @@ import { toast } from "../components/Toast";
 import { ONLINE_VIDEOS } from "../lib/data";
 import { navigate } from "../lib/router";
 import { customMedia } from "../lib/store";
+import { engineStore } from "../lib/engine";
 import { invoke, isTauri } from "../lib/tauri";
 import {
   audioStore, playRadio, stopSession, stationToTrack,
@@ -14,6 +15,7 @@ import {
   parseM3U, loadChannels, importChannels, removeChannelsBySource, clearChannels,
   channelGroups, channelSources, loadRecent, pushRecent,
   parseYouTubeInput, ytEmbedUrl, ytThumb, loadYtKey, ytSearch, ytTestKey, YtError,
+  ytdlpSearch, ytdlpStatus,
   BUILTIN_TV,
   type IptvChannel, type YtResult,
 } from "../lib/online";
@@ -66,6 +68,16 @@ function YouTubeTab({ q, music }: { q: string; music?: boolean }) {
     return () => window.removeEventListener("focus", fn);
   }, []);
 
+  // v0.9.0 — built-in extractor presence (drives keyless search + native play)
+  const [ytdlpOk, setYtdlpOk] = useState<boolean | null>(null);
+  useEffect(() => {
+    void ytdlpStatus().then((s) => setYtdlpOk(s.available));
+  }, []);
+  const engine = useSyncExternalStore(engineStore.sub, engineStore.get);
+  // native path = healthy mpv engine + bundled extractor: hardware-decoded
+  // playback with VLC-grade controls and a fraction of the WebView's CPU
+  const canNative = engine.kind === "mpv" && ytdlpOk === true;
+
   const [input, setInput] = useState("");
   const [searchQ, setSearchQ] = useState("");
   const [results, setResults] = useState<YtResult[] | null>(null);
@@ -78,23 +90,52 @@ function YouTubeTab({ q, music }: { q: string; music?: boolean }) {
     if (q) { setSearchQ(q); }
   }, [q]);
 
+  /** engine-aware play: native player when possible, embed otherwise */
+  const playDecision = (videoId: string, listId: string | undefined, title: string) => {
+    if (canNative) {
+      const url = listId && !videoId
+        ? `https://www.youtube.com/playlist?list=${listId}`
+        : `https://www.youtube.com/watch?v=${videoId}`;
+      customMedia.set({ name: title || "YouTube", url });
+      navigate("player");
+      return;
+    }
+    setPlaying({ videoId, listId, title });
+  };
+
   const runSearch = async (term: string) => {
     const t = term.trim();
     if (!t) return;
     // a pasted link in the search box → just play it
     const parsed = parseYouTubeInput(t);
     if (parsed.videoId || parsed.listId) {
-      setPlaying({ videoId: parsed.videoId || "", listId: parsed.listId, title: parsed.listId && !parsed.videoId ? "YouTube playlist" : t });
+      playDecision(parsed.videoId || "", parsed.listId, parsed.listId && !parsed.videoId ? "YouTube playlist" : t);
       return;
     }
-    if (!key) { setErr("Add your own YouTube Data API key in Settings → Online to search."); return; }
     setBusy(true); setErr(""); setResults(null);
     try {
-      const rs = await ytSearch(key, t, { music });
-      setResults(rs);
-      if (!rs.length) setErr("No results.");
+      if (key) {
+        const rs = await ytSearch(key, t, { music });
+        setResults(rs);
+        if (!rs.length) setErr("No results.");
+      } else {
+        // v0.9.0: NO KEY → the built-in extractor searches instead
+        if (!isTauri) { setErr("Search runs in the desktop app (built-in extractor or your own API key)."); return; }
+        if (ytdlpOk === false) {
+          setErr("Search needs a YouTube Data API key (Settings → Online) — or reinstall OMP to get the built-in extractor back.");
+          return;
+        }
+        const rs = await ytdlpSearch(t, 20);
+        setResults(rs);
+        if (!rs.length) setErr("No results.");
+      }
     } catch (e) {
-      setErr(e instanceof YtError ? e.message : "Search failed — network error.");
+      const msg = e instanceof Error ? e.message : String(e);
+      setErr(
+        e instanceof YtError
+          ? `${msg} (Tip: searches also work keyless through the built-in extractor — clear the key in Settings → Online.)`
+          : msg || "Search failed — network error.",
+      );
     } finally {
       setBusy(false);
     }
@@ -103,7 +144,7 @@ function YouTubeTab({ q, music }: { q: string; music?: boolean }) {
   const playParsed = (text: string) => {
     const p = parseYouTubeInput(text);
     if (!p.videoId && !p.listId) { toast("Not a YouTube link or video id", "err"); return; }
-    setPlaying({ videoId: p.videoId || "", listId: p.listId, title: text });
+    playDecision(p.videoId || "", p.listId, text);
   };
 
   const openInBrowser = (url: string) => {
@@ -150,6 +191,11 @@ function YouTubeTab({ q, music }: { q: string; music?: boolean }) {
           <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "2px 4px 8px" }}>
             <Icon name="play" size={14} />
             <div style={{ flex: 1, fontSize: 13, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{playing.title}</div>
+            {ytdlpOk && (
+              <button className="btn ghost sm" title="Play through OMP's native engine — hardware decoded, way lighter on the CPU" onClick={() => playDecision(playing.videoId, playing.listId, playing.title)}>
+                <Icon name="play" size={13} /> Native player
+              </button>
+            )}
             <button className="icon-btn" title="Open in browser" onClick={() => openInBrowser(playing.videoId ? `https://www.youtube.com/watch?v=${playing.videoId}` : `https://www.youtube.com/playlist?list=${playing.listId}`)}>
               <Icon name="external" size={14} />
             </button>
@@ -183,7 +229,7 @@ function YouTubeTab({ q, music }: { q: string; music?: boolean }) {
           <div className="section-label" style={{ marginBottom: 10 }}>{music ? "Music results" : "Results"}</div>
           <div className="yt-result-grid">
             {results.map((r) => (
-              <div key={r.id} className="card hover yt-result" onClick={() => setPlaying({ videoId: r.id, title: r.title })}>
+              <div key={r.id} className="card hover yt-result" onClick={() => playDecision(r.id, undefined, r.title)} title={canNative ? "Play in OMP's native player" : "Play in the embedded player"}>
                 <div className="yt-result-thumb">
                   <img src={r.thumb} alt="" loading="lazy" onError={(e) => { (e.target as HTMLImageElement).style.opacity = "0"; }} />
                   <span className={`yt-dur ${r.live ? "live" : ""}`}>{r.duration}</span>
@@ -205,7 +251,7 @@ function YouTubeTab({ q, music }: { q: string; music?: boolean }) {
       </div>
       <div className="yt-grid">
         {ONLINE_VIDEOS.filter((v) => !q || v.name.toLowerCase().includes(q)).map((v) => (
-          <div key={v.id} className="card hover yt-card" onClick={() => setPlaying({ videoId: v.yt, title: v.name })}>
+          <div key={v.id} className="card hover yt-card" onClick={() => playDecision(v.yt, undefined, v.name)}>
             <div className="yt-thumb">
               <img src={ytThumb(v.yt)} alt={v.name} loading="lazy" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }} />
               <span className="icon-btn" style={{ position: "relative", background: "rgba(18,20,26,0.65)", color: "#fff", borderRadius: 99, width: 46, height: 46, backdropFilter: "blur(8px)" }}>

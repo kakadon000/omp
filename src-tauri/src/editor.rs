@@ -53,6 +53,220 @@ pub fn editor_ffmpeg_status() -> Value {
     }
 }
 
+/* ------------------------------------------------------------------ */
+/*  v0.9.0 — ffmpeg fallback probe for the library scanner             */
+/* ------------------------------------------------------------------ */
+/*  The scanner's primary probe runs through libmpv (vo=image). On      */
+/*  machines where the engine DLL is refused, EVERY video lost its      */
+/*  thumbnail and duration. The bundled ffmpeg.exe is independent of    */
+/*  libmpv — so when mpv probing is unavailable, ffmpeg picks up the    */
+/*  slack: one invocation extracts the still AND prints duration,       */
+/*  resolution, codecs and tags on stderr.                             */
+
+fn parse_hhmmss(s: &str) -> f64 {
+    let parts: Vec<f64> = s.split(':').filter_map(|p| p.trim().parse::<f64>().ok()).collect();
+    if parts.len() == 3 {
+        parts[0] * 3600.0 + parts[1] * 60.0 + parts[2]
+    } else if parts.len() == 2 {
+        parts[0] * 60.0 + parts[1]
+    } else {
+        parts.first().copied().unwrap_or(0.0)
+    }
+}
+
+fn spawn_quiet(cmd: &mut std::process::Command) -> Option<std::process::Child> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    cmd.stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .stdin(std::process::Stdio::null())
+        .spawn()
+        .ok()
+}
+
+pub(crate) fn ffmpeg_probe(
+    path: &str,
+    thumb_dir: Option<&std::path::Path>,
+    audio: bool,
+) -> Option<crate::mpv::ProbeMeta> {
+    let ff = ffmpeg_path()?;
+    let want_thumb = thumb_dir.is_some();
+
+    // still extraction: 3s in is the classic safe spot; if the clip is
+    // shorter than that the output stays empty and we retry from 0
+    let mut meta = None;
+    let attempts: Vec<Vec<String>> = if want_thumb {
+        let out = thumb_dir.unwrap().join("ff.jpg");
+        let out_s = out.to_string_lossy().into_owned();
+        if audio {
+            // embedded album art is a video stream — map it explicitly
+            vec![vec![
+                "-y".into(), "-i".into(), path.into(), "-map".into(), "0:v:0".into(),
+                "-frames:v".into(), "1".into(), "-q:v".into(), "3".into(), out_s.clone(),
+            ]]
+        } else {
+            vec![
+                vec![
+                    "-y".into(), "-ss".into(), "3".into(), "-i".into(), path.into(),
+                    "-frames:v".into(), "1".into(), "-q:v".into(), "3".into(), out_s.clone(),
+                ],
+                vec![
+                    "-y".into(), "-i".into(), path.into(), "-frames:v".into(), "1".into(),
+                    "-q:v".into(), "3".into(), out_s.clone(),
+                ],
+            ]
+        }
+    } else {
+        // info-only run: ffmpeg exits non-zero without an output file, but
+        // the input dump (Duration/Stream/Metadata) still lands on stderr
+        vec![vec!["-i".into(), path.into()]]
+    };
+
+    let mut stderr_all = String::new();
+    for args in &attempts {
+        let mut cmd = std::process::Command::new(&ff);
+        cmd.args(args);
+        let Some(mut child) = spawn_quiet(&mut cmd) else { return None };
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let mut err_pipe = child.stderr.take();
+        let mut err_buf = String::new();
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) => {
+                    if std::time::Instant::now() > deadline {
+                        let _ = child.kill();
+                        return meta;
+                    }
+                    if let Some(pipe) = err_pipe.as_mut() {
+                        use std::io::Read;
+                        let mut chunk = [0u8; 8192];
+                        match pipe.read(&mut chunk) {
+                            Ok(0) => std::thread::sleep(std::time::Duration::from_millis(40)),
+                            Ok(k) => err_buf.push_str(&String::from_utf8_lossy(&chunk[..k])),
+                            Err(_) => std::thread::sleep(std::time::Duration::from_millis(40)),
+                        }
+                    } else {
+                        std::thread::sleep(std::time::Duration::from_millis(40));
+                    }
+                }
+                Err(_) => return meta,
+            }
+        }
+        if let Some(mut pipe) = err_pipe.take() {
+            use std::io::Read;
+            let _ = pipe.read_to_string(&mut err_buf);
+        }
+        stderr_all.push_str(&err_buf);
+
+        if want_thumb {
+            let landed = thumb_dir
+                .unwrap()
+                .join("ff.jpg")
+                .metadata()
+                .map(|m| m.len() > 0)
+                .unwrap_or(false);
+            if landed {
+                break;
+            }
+        }
+    }
+
+    // pull what we can from the ffmpeg input dump
+    let mut duration = 0f64;
+    let mut width = 0i64;
+    let mut height = 0i64;
+    let mut vcodec = String::new();
+    let mut acodec = String::new();
+    let mut artist = String::new();
+    let mut album = String::new();
+    let mut genre = String::new();
+    for line in stderr_all.lines() {
+        let l = line.trim();
+        if let Some(rest) = l.strip_prefix("Duration:") {
+            let raw = rest.split(',').next().unwrap_or("").trim();
+            duration = parse_hhmmss(raw);
+        } else if l.contains("Video:") && vcodec.is_empty() {
+            // "Stream #0:0 ... : Video: h264 (High), yuv420p, 1920x1080 ..."
+            if let Some(after) = l.split("Video:").nth(1) {
+                let toks: Vec<&str> = after.split(|c| c == ',' || c == ' ').filter(|t| !t.is_empty()).collect();
+                vcodec = toks.first().copied().unwrap_or("").to_string();
+                for t in &toks {
+                    if let Some((w, h)) = t.split_once('x') {
+                        if let (Ok(w), Ok(h)) = (w.trim().parse::<i64>(), h.trim().parse::<i64>()) {
+                            if w > 16 && h > 16 && w < 20000 && h < 20000 {
+                                width = w;
+                                height = h;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if vcodec == "mjpeg" || vcodec == "png" {
+                    // attached picture, not real video — keep fields empty
+                    vcodec.clear();
+                    width = 0;
+                    height = 0;
+                }
+            }
+        } else if l.contains("Audio:") && acodec.is_empty() {
+            if let Some(after) = l.split("Audio:").nth(1) {
+                acodec = after
+                    .split(|c| c == ',' || c == ' ')
+                    .find(|t| !t.is_empty())
+                    .unwrap_or("")
+                    .to_string();
+            }
+        } else if let Some((k, v)) = l.split_once(':') {
+            let key = k.trim().to_ascii_lowercase();
+            let val = v.trim();
+            if val.is_empty() || key.contains("duration") || key.contains("stream") {
+                continue;
+            }
+            match key.as_str() {
+                "artist" | "album_artist" => artist = val.to_string(),
+                "album" => album = val.to_string(),
+                "genre" => genre = val.to_string(),
+                _ => {}
+            }
+        }
+    }
+
+    let thumb = want_thumb
+        && thumb_dir
+            .unwrap()
+            .join("ff.jpg")
+            .metadata()
+            .map(|m| m.len() > 0)
+            .unwrap_or(false);
+    let container = std::path::Path::new(path)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+
+    // a probe that yielded NOTHING at all (unreadable file) is not metadata
+    if duration == 0.0 && width == 0 && !thumb && vcodec.is_empty() && acodec.is_empty() {
+        return meta;
+    }
+    meta = Some(crate::mpv::ProbeMeta {
+        duration,
+        width,
+        height,
+        video_codec: vcodec,
+        audio_codec: acodec,
+        container,
+        artist,
+        album,
+        genre,
+        thumb,
+    });
+    meta
+}
+
 /// Write one overlay PNG (base64 data URL body or raw base64) to a temp file.
 /// Returns the absolute path; an empty string on failure.
 #[tauri::command]

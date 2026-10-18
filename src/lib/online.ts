@@ -377,6 +377,65 @@ export async function ytTestKey(key: string): Promise<{ ok: boolean; msg: string
   }
 }
 
+/* ------------------------------------------------------------------ */
+/*  v0.9.0 — built-in extractor (bundled yt-dlp.exe)                    */
+/* ------------------------------------------------------------------ */
+/*  Search WITHOUT any API key: the shell runs the bundled extractor's  */
+/*  "ytsearchN:" mode and the results are shaped exactly like the Data  */
+/*  API path, so the UI renders both identically. Slower than the API   */
+/*  (one process spawn per search) but keyless and quota-free — this    */
+/*  is the out-of-the-box path.                                        */
+
+import { invoke } from "./tauri";
+
+export async function ytdlpSearch(query: string, max = 20): Promise<YtResult[]> {
+  const raw = (await invoke<string | null>("online_yt_search", { query, max })) ?? "";
+  if (!raw.trim()) throw new Error("The extractor returned nothing");
+  const arr = JSON.parse(raw) as Array<Record<string, unknown>>;
+  return arr.map((v) => {
+    const secs = Number(v.duration || 0);
+    const live = !!v.live;
+    const h = Math.floor(secs / 3600);
+    const m = Math.floor((secs % 3600) / 60);
+    const s = Math.floor(secs % 60);
+    const duration =
+      live || !secs
+        ? ""
+        : h > 0
+          ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
+          : `${m}:${String(s).padStart(2, "0")}`;
+    const n = Number(v.views || 0);
+    const views =
+      n >= 1e6
+        ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1)}M views`
+        : n >= 1e3
+          ? `${(n / 1e3).toFixed(n >= 1e4 ? 0 : 1)}K views`
+          : n > 0
+            ? `${n} views`
+            : "";
+    return {
+      id: String(v.id || ""),
+      title: String(v.title || "Untitled"),
+      channel: String(v.channel || ""),
+      thumb: String(v.thumb || ytThumb(String(v.id || ""))),
+      duration,
+      views,
+      published: "",
+      live,
+    };
+  });
+}
+
+/** Extractor availability (drives Settings + the Online hint bars). */
+export async function ytdlpStatus(): Promise<{ available: boolean; path: string }> {
+  try {
+    const s = await invoke<{ available: boolean; path: string } | null>("online_ytdlp_status");
+    return s ?? { available: false, path: "" };
+  } catch {
+    return { available: false, path: "" };
+  }
+}
+
 /* ----------------------------- misc --------------------------------- */
 
 export function isStreamUrl(u: string): boolean {
