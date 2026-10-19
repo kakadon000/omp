@@ -72,6 +72,7 @@ mod editor;
 mod health;
 mod downloader;
 mod bootlog;
+mod bootguard;
 
 /// Detect the Windows build number from the OS plugin (e.g. "10.0.22631").
 #[cfg(windows)]
@@ -860,6 +861,22 @@ fn online_innertube_search(query: String, max: Option<u32>) -> Result<String, St
 }
 
 pub fn run() {
+    // v0.15.4 — NEVER SILENT. Every previous "nothing at all happens" report
+    // traced to deaths BEFORE the Tauri app existed: a missing/broken WebView2
+    // Runtime (or any window-creation failure) hit `.expect()`, the panic
+    // vanished behind windows_subsystem="windows" (no console), and the
+    // process evaporated with no window, no report and no log entry. From
+    // this version on, NO failure path is invisible:
+    //   preflight  — the WebView2 Runtime is probed before anything is built;
+    //                if it cannot answer, a native Windows dialog explains
+    //                the fix and OMP-report.txt lands on the Desktop.
+    //   panic hook — any panic leaves a Desktop report; pre-boot panics also
+    //                pop a real dialog.
+    //   fatal()    — the old `.expect()` is gone: a failed boot ends with a
+    //                dialog naming the failure + a Desktop report.
+    bootguard::install_panic_hook();
+    bootguard::preflight();
+    let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
     tauri::Builder::default()
         // MUST be the first plugin: catches second launches (double-clicking
         // more media files) and forwards their paths to the running app
@@ -1141,6 +1158,11 @@ pub fn run() {
                         };
                         bootlog::write_desktop_report(&app2, reason);
                         bootlog::log(&app2, "failsafe", &format!("8s elapsed, UI never proved itself — force-showing the window (streak now {streak})"));
+                        // v0.15.4 — repeated failure gets a VISIBLE Windows
+                        // dialog, not just a file the user may never notice
+                        if streak >= 2 {
+                            bootguard::repair_prompt();
+                        }
                         show_main(&app2);
                     }
                 });
@@ -1178,8 +1200,29 @@ pub fn run() {
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("error while building OMP")
-        .run(|app, event| {
+    }));
+    let app = match built {
+        Ok(Ok(app)) => app,
+        Ok(Err(e)) => {
+            // fatal() never returns: dialog + Desktop report + exit(2)
+            bootguard::fatal(
+                "OMP failed to start — its interface could not be created.",
+                &format!(
+                    "The window system reported: {e}\n\
+                     The most common cause is a broken or missing WebView2 Runtime — the \
+                     component every OMP window is drawn with. Installing Microsoft's \
+                     Evergreen Standalone Installer (x64) and restarting the PC fixes it.\
+                     \n\nOtherwise, send the report to the developer — it names the exact failure."
+                ),
+            )
+        }
+        Err(_) => {
+            // the panic hook already wrote the report and showed the dialog
+            std::process::exit(101);
+        }
+    };
+    bootguard::mark_app_live();
+    app.run(|app, event| {
             // release the native engine + video surface cleanly
             if let tauri::RunEvent::Exit = event {
                 bootlog::log(app, "exit", "clean exit — engine released, session marked clean");

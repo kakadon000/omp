@@ -28,6 +28,32 @@ distinctive, not into reinventing video decoding.
   you pick**, ten one-tap presets, themes that travel as `.omptheme` files,
   adjustable transparency, Reduced Effects for low-end PCs.
 
+## What's new in v0.15.4 — never silent
+
+- **The pre-boot guard.** Four rounds of "I ran it and nothing happens"
+  traced to one hole: failures that happen BEFORE the app builds — most
+  often a missing or broken **WebView2 Runtime** — died through a panic
+  that Windows swallowed completely (no window, no report, no log, nothing).
+  OMP now checks the WebView2 Runtime **before anything is built**. If it
+  cannot answer, a real Windows dialog explains the fix, OMP-report.txt
+  lands on the Desktop, and OMP offers to open the official Microsoft
+  repair page itself.
+- **No more silent deaths.** The old crash-on-boot path (a `.expect()` on
+  the window-system build, invisible behind the windowed subsystem) is
+  gone. Every startup failure now ends in a **visible dialog naming the
+  exact failure** plus a Desktop report — even if the interface never
+  existed at all.
+- **Panic guard.** A panic hook is installed as the very first line of the
+  process: any internal crash leaves OMP-report.txt on the Desktop, and
+  pre-boot crashes also pop a real Windows message box.
+- **Repeat-failure alarm.** If boots keep failing, OMP no longer relies on
+  a file you may never notice: it pops a **visible Windows dialog** with
+  the official repair page.
+- **Installer fix.** The setup now embeds the WebView2 bootstrapper
+  (installed from inside the installer). Note: the `.msi` format never
+  installs WebView2 — if you installed with the MSI, run the `-setup.exe`
+  once.
+
 ## What's new in v0.15.3 — the black box
 
 - **The flight recorder.** OMP now logs every boot decision, graphics-mode

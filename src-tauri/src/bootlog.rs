@@ -14,7 +14,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager};
 
 /// when this log line was written: UTC day-index + clock, no chrono dep
-fn stamp() -> String {
+/// (v0.15.4: shared with bootguard's pre-boot reports)
+pub(crate) fn stamp() -> String {
     let secs = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -73,8 +74,9 @@ pub fn states_line(app: &AppHandle) -> String {
 /// WebView2 runtime version, read the same way Microsoft's tooling does
 /// (BLBeacon registry key). Strings like "141.0.3537.92" tell us instantly
 /// whether a broken Evergreen update is the culprit.
+/// (v0.15.4: shared with bootguard's pre-boot reports)
 #[cfg(windows)]
-fn webview2_version() -> String {
+pub(crate) fn webview2_version() -> String {
     for key in [
         r"HKCU\Software\Microsoft\Edge\BLBeacon",
         r"HKLM\Software\Microsoft\Edge\BLBeacon",
