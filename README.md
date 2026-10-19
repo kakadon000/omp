@@ -28,6 +28,29 @@ distinctive, not into reinventing video decoding.
   you pick**, ten one-tap presets, themes that travel as `.omptheme` files,
   adjustable transparency, Reduced Effects for low-end PCs.
 
+## What's new in v0.15.5 — the ladder
+
+- **The field report cracked the case.** The first OMP-report.txt from the
+  wild showed the WebView2 Runtime perfectly healthy — but the main
+  window's webview creation dying with **Windows error 0x8007139F** ("The
+  group or resource is not in the correct state"). The splashscreen, built
+  moments earlier with nearly identical flags, succeeded. The deltas:
+  `shadow(true)` and the safe-mode `--disable-gpu` browser args. One failed
+  window creation used to kill the whole app — that was four rounds of
+  "I ran it and nothing happens".
+- **The window ladder.** The main window is now built on a ladder of four
+  progressively plainer profiles: full glass → no shadow → no transparency
+  → fully vanilla (native decorations, no custom GPU flags). The first
+  profile the machine accepts **wins and is remembered** (`ui.winrung`) —
+  later boots open straight into the profile that works. A machine that
+  rejects glass gets a window that works instead of no app at all.
+- **Every rung is logged.** Failed profiles land in the boot log and in
+  OMP-report.txt, so a future report names the exact profile that fixed
+  (or broke) a machine.
+- **Never silent stays.** The v0.15.4 pre-boot guard, native failure
+  dialogs, panic hook, Desktop reports and the embedded WebView2
+  installer are all unchanged.
+
 ## What's new in v0.15.4 — never silent
 
 - **The pre-boot guard.** Four rounds of "I ran it and nothing happens"

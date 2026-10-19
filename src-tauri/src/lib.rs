@@ -1075,8 +1075,29 @@ pub fn run() {
             // --disable-gpu. The window stays INVISIBLE until the webview
             // proves it rendered something (ui_ready) — no more see-through
             // windows with nothing painted inside.
-            {
-                let mut builder = tauri::WebviewWindowBuilder::new(
+            // v0.15.5 — THE WINDOW LADDER. The first real field report (the
+            // v0.15.4 OMP-report.txt) cracked it: WebView2 runtime present and
+            // healthy, but creating the MAIN window's webview died with
+            // HRESULT 0x8007139F ("The group or resource is not in the correct
+            // state") — while the splashscreen, created moments earlier with
+            // nearly identical flags, succeeded. The deltas between them:
+            // shadow(true) and the safe-mode --disable-gpu browser args. On
+            // machines in a broken composition state, the fancy frameless
+            // transparent webview creation can fail exactly this way — and one
+            // failed creation used to kill the whole app (four rounds of
+            // "nothing runs"). So the main window is now built on a LADDER of
+            // four progressively plainer window profiles; the first that
+            // builds wins and is remembered (ui.winrung) so later boots go
+            // straight to it. A machine that rejects glass gets a window that
+            // WORKS instead of no app at all.
+            let build_rung = |app: &tauri::App, rung: u8| -> Result<tauri::WebviewWindow, tauri::Error> {
+                // rung 1: the full glass profile (what v0.15.0–v0.15.4 always did)
+                // rung 2: no shadow — the one delta vs the splash that worked
+                // rung 3: no transparency — plain opaque frameless window
+                // rung 4: native decorations + no custom GPU args — the most
+                //         vanilla WebView2 surface Windows can produce
+                let transp = rung <= 2 && !plain_window;
+                let mut b = tauri::WebviewWindowBuilder::new(
                     app,
                     "main",
                     tauri::WebviewUrl::App("index.html".into()),
@@ -1084,23 +1105,74 @@ pub fn run() {
                 .title("OMP — Open Media Player")
                 .inner_size(1220.0, 780.0)
                 .min_inner_size(860.0, 560.0)
-                .decorations(false)
-                .transparent(!plain_window)
+                .decorations(rung >= 4)
+                .transparent(transp)
                 .visible(false)
                 .center()
-                .shadow(true);
+                .shadow(rung <= 2);
                 if SAFE_MODE.load(Ordering::Relaxed) {
-                    // software webview rendering + reduced glass from frame 1
-                    builder = builder
-                        .additional_browser_args(
+                    if rung >= 4 {
+                        // tauri's own default browser args — WITHOUT --disable-gpu
+                        b = b.additional_browser_args(
+                            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection",
+                        );
+                    } else {
+                        // software webview rendering + reduced glass from frame 1
+                        b = b.additional_browser_args(
                             "--disable-gpu --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection",
                         )
                         .initialization_script(
                             "document.documentElement.classList.add('reduced');document.documentElement.dataset.safegfx='1';",
                         );
+                    }
                 }
-                builder.build()?;
+                b.build()
+            };
+            let saved_rung: Option<u8> = data_dir
+                .as_ref()
+                .and_then(|d| std::fs::read_to_string(d.join("ui.winrung")).ok())
+                .and_then(|s| s.trim().parse().ok())
+                .filter(|n| (1..=4).contains(n));
+            let mut rungs: Vec<u8> = match saved_rung {
+                Some(r) => {
+                    bootlog::log(&apph, "boot", &format!("sticky window profile: rung {r} (ui.winrung)"));
+                    vec![r]
+                }
+                None => vec![1, 2, 3, 4],
+            };
+            // the sticky profile is tried first; if IT fails this time, fall
+            // through the whole ladder before giving up
+            if saved_rung.is_some() {
+                rungs.extend((1u8..=4).filter(|r| Some(*r) != saved_rung));
             }
+            let mut win_rung: Option<u8> = None;
+            let mut rung_errors: Vec<String> = Vec::new();
+            for rung in rungs {
+                match build_rung(app, rung) {
+                    Ok(_) => {
+                        if Some(rung) != saved_rung {
+                            if let Some(d) = &data_dir {
+                                let _ = std::fs::write(d.join("ui.winrung"), rung.to_string());
+                            }
+                        }
+                        bootlog::log(&apph, "boot", &format!("main window created — rung {rung} wins"));
+                        win_rung = Some(rung);
+                        break;
+                    }
+                    Err(e) => {
+                        bootlog::log(&apph, "boot", &format!("window rung {rung} FAILED: {e}"));
+                        rung_errors.push(format!("profile {rung}: {e}"));
+                        std::thread::sleep(std::time::Duration::from_millis(250));
+                    }
+                }
+            }
+            let Some(win_rung) = win_rung else {
+                return Err(format!(
+                    "OMP could not create its main window on any of 4 window profiles ({}) — if this persists, close OMP, delete the folders AppData\\Local\\app.omp.player and AppData\\Roaming\\app.omp.player, then open OMP again",
+                    rung_errors.join(" | ")
+                )
+                .into());
+            };
             // Window materials. The DWM material is OS-side — it is NOT
             // affected by the webview's software rendering, so safe mode keeps
             // the glass look. v0.15.0 — the splash window gets NO Mica/Acrylic:
@@ -1110,8 +1182,10 @@ pub fn run() {
             {
                 let mica = windows_build() >= 22000;
                 if let Some(w) = app.get_webview_window("main") {
-                    // v0.15.3 — plain-window mode skips DWM materials entirely
-                    if !plain_window {
+                    // v0.15.3 — plain-window mode skips DWM materials entirely;
+                    // v0.15.5 — ladder rungs 3/4 built an OPAQUE window, so the
+                    // material must be skipped for them too
+                    if win_rung <= 2 && !plain_window {
                         apply_effect(&w, mica);
                     }
                 }
