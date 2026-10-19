@@ -340,17 +340,12 @@ export default function App() {
   const toggleEffects = () =>
     update({ effects: document.documentElement.classList.contains("reduced") ? "full" : "reduced" });
 
-  // v0.15.2 — one tap: shell facts + engine log into the clipboard, so a
-  // "it crashes" report finally arrives with something actionable in it
+  // v0.15.2 — one tap: the FULL flight-recorder report (boot log, safe-mode
+  // decisions, WebView2 version, engine probe trail) into the clipboard
   const copyCrashReport = async () => {
     try {
-      const [shell, diag] = await Promise.all([
-        invoke<Record<string, unknown>>("shell_info").catch(() => null),
-        invoke<Record<string, unknown>>("mpv_diag").catch(() => null),
-      ]);
-      await navigator.clipboard.writeText(
-        JSON.stringify({ kind: "omp-crash-recovery", version: APP_VERSION, at: new Date().toISOString(), shell, engine: diag }, null, 2),
-      );
+      const text = (await invoke<string>("omp_diag_pack")) ?? "";
+      await navigator.clipboard.writeText(text);
       toast("Crash report copied — paste it to the developer", "ok");
     } catch {
       toast("Could not copy the crash report", "err");

@@ -695,6 +695,7 @@ pub fn mpv_attach(app: AppHandle, hwdec: Option<String>, show: Option<bool>) -> 
     let mut st = mpv_status();
     if !st.available {
         st.error = Some("The libmpv engine DLL is missing or refused to load in this install".into());
+        crate::bootlog::log(&app, "engine", &format!("attach FAILED: {}", st.error.as_deref().unwrap_or("")));
         return st;
     }
     // v0.6.2: the engine is GLOBAL — reconcile the instance KIND with the
@@ -757,6 +758,16 @@ pub fn mpv_attach(app: AppHandle, hwdec: Option<String>, show: Option<bool>) -> 
     };
 
     let Some(a) = api() else { return st };
+    crate::bootlog::log(
+        &app,
+        "engine",
+        &format!(
+            "attaching {} engine (safe_video={}, requested hwdec={})",
+            if video { "video" } else { "audio" },
+            crate::SAFE_VIDEO.load(Ordering::Relaxed),
+            hwdec.as_deref().unwrap_or("auto")
+        ),
+    );
     unsafe {
         let mut h = (a.create)();
         if h.is_null() {
@@ -845,6 +856,7 @@ pub fn mpv_attach(app: AppHandle, hwdec: Option<String>, show: Option<bool>) -> 
         let mut code = (a.initialize)(h);
         if code != 0 {
             let why_full = err_str(&a, code);
+            crate::bootlog::log(&app, "engine", &format!("mpv_initialize failed with full options: {why_full} — retrying bare-minimum"));
             (a.terminate_destroy)(h);
             // v0.9.0: retry with the BARE minimum option set. A tuned option
             // this particular DLL rejects (removed/renamed options across
@@ -882,6 +894,7 @@ pub fn mpv_attach(app: AppHandle, hwdec: Option<String>, show: Option<bool>) -> 
                 st.error = Some(format!(
                     "mpv_initialize failed: {why_full} · minimal-options retry: {why_min}"
                 ));
+                crate::bootlog::log(&app, "engine", &format!("attach FAILED: {}", st.error.as_deref().unwrap_or("")));
                 return st;
             }
         }
@@ -910,6 +923,11 @@ pub fn mpv_attach(app: AppHandle, hwdec: Option<String>, show: Option<bool>) -> 
             joined: Some(thread),
         });
         drop(guard);
+        crate::bootlog::log(
+            &app,
+            "engine",
+            &format!("{} engine attached OK", if video { "video" } else { "audio" }),
+        );
 
         // v0.5.0 CPU fix — now that the surface is genuinely attached:
         // strip the DWM material (Mica/Acrylic) while video plays under the

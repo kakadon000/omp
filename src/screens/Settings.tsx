@@ -83,6 +83,8 @@ export function Settings({ settings, update }: { settings: SettingsShape; update
   const [key, setKey] = useState(() => loadYtKey());
   const [keyMsg, setKeyMsg] = useState("");
   const [testing, setTesting] = useState(false);
+  // v0.15.3 — Report-a-problem buttons busy flag
+  const [reporting, setReporting] = useState(false);
   const [chCount, setChCount] = useState(() => loadChannels().length);
   useEffect(() => {
     const fn = () => setChCount(loadChannels().length);
@@ -372,6 +374,50 @@ export function Settings({ settings, update }: { settings: SettingsShape; update
             <button className="btn sm" onClick={() => { void invoke("omp_open_install_folder"); }}>
               <Icon name="external" size={13} /> Open
             </button>
+          </div>
+
+          {/* v0.15.3 — the one-stop bug-report channel: full flight-recorder
+              report to the clipboard, or as a file on the Desktop that can be
+              dragged straight into a chat */}
+          <div className="row" style={{ borderTop: "1px solid var(--stroke)", marginTop: 8, paddingTop: 8 }}>
+            <span className="icon-btn"><Icon name="info" /></span>
+            <div className="row-main">
+              <div className="row-title">Report a problem</div>
+              <div className="row-desc">
+                Copies everything OMP knows about this machine (boot log, graphics mode, engine state) — send it to the developer and things get fixed for real.
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button
+                className="btn sm"
+                disabled={reporting}
+                onClick={async () => {
+                  setReporting(true);
+                  try {
+                    const text = (await invoke<string>("omp_diag_pack")) ?? "";
+                    await navigator.clipboard.writeText(text);
+                    toast("Full report copied — paste it to the developer", "ok");
+                  } catch { toast("Copy failed — try Save to Desktop instead", "err"); }
+                  setReporting(false);
+                }}
+              >
+                <Icon name="info" size={13} /> {reporting ? "Copying…" : "Copy report"}
+              </button>
+              <button
+                className="btn sm"
+                disabled={reporting}
+                onClick={async () => {
+                  setReporting(true);
+                  try {
+                    const where = await invoke<string>("omp_report_desktop");
+                    toast(`Report saved: ${where}`, "ok");
+                  } catch { toast("Could not write to the Desktop", "err"); }
+                  setReporting(false);
+                }}
+              >
+                <Icon name="save" size={13} /> Save to Desktop
+              </button>
+            </div>
           </div>
         </div>
       )}

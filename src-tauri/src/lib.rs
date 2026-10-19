@@ -71,6 +71,7 @@ mod library;
 mod editor;
 mod health;
 mod downloader;
+mod bootlog;
 
 /// Detect the Windows build number from the OS plugin (e.g. "10.0.22631").
 #[cfg(windows)]
@@ -137,7 +138,7 @@ static BOOT_SHOWN: AtomicBool = AtomicBool::new(false);
 ///   ui.ok       the UI proved itself at least once (any successful launch)
 ///   ui.failsafe the last launch needed the 8s failsafe (one-shot, consumed)
 ///   ui.safe     sticky safe-graphics mode (software rendering worked here)
-static SAFE_MODE: AtomicBool = AtomicBool::new(false);
+pub(crate) static SAFE_MODE: AtomicBool = AtomicBool::new(false);
 
 /// v0.15.1 — WHY this launch runs in safe mode. Rescue-graded (the last
 /// launch failed and had to be force-shown, or a previous safe launch was
@@ -145,7 +146,7 @@ static SAFE_MODE: AtomicBool = AtomicBool::new(false);
 /// STICKY. Probe-graded (fresh install / UI never proved itself) means the
 /// machine is UNKNOWN → ui_ready does NOT stick safe mode, so healthy
 /// machines silently graduate to normal GPU rendering on launch #2.
-static SAFE_STICKY: AtomicBool = AtomicBool::new(false);
+pub(crate) static SAFE_STICKY: AtomicBool = AtomicBool::new(false);
 
 /// v0.15.2 — safe VIDEO mode. The webview and mpv break on the SAME broken
 /// GPU drivers: a machine that needed --disable-gpu just to draw its UI runs
@@ -160,7 +161,7 @@ pub(crate) static SAFE_VIDEO: AtomicBool = AtomicBool::new(false);
 /// loss). Detected from the session.dirty marker a previous launch left
 /// behind; grades THIS launch as a rescue for both the webview and the video
 /// engine, and surfaces a recovery banner with a one-tap crash report.
-static CRASHED_LAST: AtomicBool = AtomicBool::new(false);
+pub(crate) static CRASHED_LAST: AtomicBool = AtomicBool::new(false);
 
 /// v0.15.1 — the ONE place that surfaces the main window during boot.
 /// Idempotent and polite: focus is only taken on the FIRST show, retries
@@ -197,6 +198,11 @@ fn close_splash(app: tauri::AppHandle) {
 fn ui_ready(app: tauri::AppHandle) -> serde_json::Value {
     show_main(&app);
     let safe = SAFE_MODE.load(Ordering::Relaxed);
+    // v0.15.3 — the interface is ALIVE: the consecutive-failsafe streak ends
+    if let Ok(d) = app.path().app_data_dir() {
+        let _ = std::fs::remove_file(d.join("ui.fscount"));
+    }
+    bootlog::log(&app, "handshake", &format!("ui_ready — interface alive (safe={safe}) · {}", bootlog::states_line(&app)));
     if let Ok(d) = app.path().app_data_dir() {
         let _ = std::fs::write(d.join("ui.ok"), b"ok");
         // this launch answered — a pending one-shot rescue flag is obsolete
@@ -223,6 +229,7 @@ fn ui_ready(app: tauri::AppHandle) -> serde_json::Value {
 #[tauri::command]
 fn ui_paint_ok(app: AppHandle) {
     // frames confirmed on this launch's graphics path — clear any doubt
+    bootlog::log(&app, "paint", "frames confirmed reaching the screen");
     if !SAFE_MODE.load(Ordering::Relaxed) {
         if let Ok(d) = app.path().app_data_dir() {
             let _ = std::fs::remove_file(d.join("ui.failsafe"));
@@ -234,6 +241,7 @@ fn ui_paint_ok(app: AppHandle) {
 fn ui_paint_suspect(app: AppHandle) {
     // window visible, compositor produced nothing for 5s — mark the machine
     // so the NEXT launch runs software rendering
+    bootlog::log(&app, "paint", "SUSPECT — no rAF frame within 5s of window show");
     if !SAFE_MODE.load(Ordering::Relaxed) {
         if let Ok(d) = app.path().app_data_dir() {
             let _ = std::fs::write(d.join("ui.failsafe"), b"1");
@@ -952,7 +960,9 @@ pub fn run() {
             downloader::dl_history_add,
             downloader::dl_history_list,
             downloader::dl_history_clear,
-            mpv::mpv_diag
+            mpv::mpv_diag,
+            bootlog::omp_diag_pack,
+            bootlog::omp_report_desktop
         ])
         .on_window_event(|window, event| {
             // Phase 3: closing the main window while music plays → hide it and
@@ -1017,6 +1027,32 @@ pub fn run() {
             if let Some(d) = &data_dir {
                 let _ = std::fs::remove_file(d.join("ui.failsafe"));
             }
+            // v0.15.3 — FLIGHT RECORDER: every boot decision lands in the log
+            let apph = app.handle().clone();
+            bootlog::log(&apph, "boot", &format!("OMP v{} starting", env!("CARGO_PKG_VERSION")));
+            bootlog::log(&apph, "boot", &bootlog::states_line(&apph));
+            // v0.15.3 — CONSECUTIVE-FAILSAFE ESCALATION. ui.fscount counts how
+            // many launches in a row never painted. At 2+, even the safe-mode
+            // glass stack is distrusted: the window becomes a plain opaque
+            // window with NO DWM material — the most conservative surface
+            // Windows can draw. If even that fails, the Desktop report fires.
+            let fs_count: u32 = data_dir
+                .as_ref()
+                .and_then(|d| std::fs::read_to_string(d.join("ui.fscount")).ok())
+                .and_then(|s| s.trim().parse().ok())
+                .unwrap_or(0);
+            let plain_window = fs_count >= 2;
+            if plain_window {
+                bootlog::log(&apph, "boot", &format!("{fs_count} consecutive failed boots — launching a PLAIN opaque window (no transparency, no material)"));
+            }
+            // v0.15.3 — crash recovery writes the report BEFORE anything can
+            // fail: even a dead webview cannot stop the Desktop file
+            if crashed_last {
+                bootlog::write_desktop_report(
+                    &apph,
+                    "OMP did not close cleanly last time. This launch already runs in maximum-compatibility mode (software UI + software video). If anything still misbehaves, send this file to the developer.",
+                );
+            }
             // v0.15.1 — the main window is built HERE (not in tauri.conf.json)
             // so a machine with a broken webview GPU path can be launched with
             // --disable-gpu. The window stays INVISIBLE until the webview
@@ -1032,7 +1068,7 @@ pub fn run() {
                 .inner_size(1220.0, 780.0)
                 .min_inner_size(860.0, 560.0)
                 .decorations(false)
-                .transparent(true)
+                .transparent(!plain_window)
                 .visible(false)
                 .center()
                 .shadow(true);
@@ -1057,7 +1093,10 @@ pub fn run() {
             {
                 let mica = windows_build() >= 22000;
                 if let Some(w) = app.get_webview_window("main") {
-                    apply_effect(&w, mica);
+                    // v0.15.3 — plain-window mode skips DWM materials entirely
+                    if !plain_window {
+                        apply_effect(&w, mica);
+                    }
                 }
             }
             // Splash choreography — first launch (the UI never proved itself
@@ -1083,7 +1122,25 @@ pub fn run() {
                     if !BOOT_SHOWN.load(Ordering::Relaxed) {
                         if let Ok(d) = app2.path().app_data_dir() {
                             let _ = std::fs::write(d.join("ui.failsafe"), b"1");
+                            // v0.15.3 — count consecutive dead boots; setup() escalates to a plain opaque window at 2+
+                            let n: u32 = std::fs::read_to_string(d.join("ui.fscount"))
+                                .ok()
+                                .and_then(|s| s.trim().parse().ok())
+                                .unwrap_or(0)
+                                + 1;
+                            let _ = std::fs::write(d.join("ui.fscount"), n.to_string());
                         }
+                        // v0.15.3 — the report lands on the Desktop even when
+                        // the webview is completely dead, with escalation-aware
+                        // guidance (WebView2 repair advice at streak >= 2)
+                        let streak = fs_count + 1;
+                        let reason = if streak >= 2 {
+                            "The OMP interface failed to boot AGAIN — even in maximum-compatibility mode. The WebView2 runtime itself is the prime suspect. FIX: install the Microsoft WebView2 Runtime from https://developer.microsoft.com/microsoft-edge/webview2/ (Evergreen Standalone Installer, x64), then restart the PC and open OMP. Or simply send this file to the developer — it contains the full boot log."
+                        } else {
+                            "The OMP interface failed to boot this time. The next launch will automatically retry in maximum-compatibility mode (software rendering). If OMP opens on the next try, you can ignore this file — otherwise send it to the developer."
+                        };
+                        bootlog::write_desktop_report(&app2, reason);
+                        bootlog::log(&app2, "failsafe", &format!("8s elapsed, UI never proved itself — force-showing the window (streak now {streak})"));
                         show_main(&app2);
                     }
                 });
@@ -1125,6 +1182,7 @@ pub fn run() {
         .run(|app, event| {
             // release the native engine + video surface cleanly
             if let tauri::RunEvent::Exit = event {
+                bootlog::log(app, "exit", "clean exit — engine released, session marked clean");
                 mpv::shutdown_all();
                 // v0.15.2 — clean goodbye: retire the crash-memory marker so
                 // the next launch is graded normally. A crash never reaches

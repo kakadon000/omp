@@ -28,6 +28,30 @@ distinctive, not into reinventing video decoding.
   you pick**, ten one-tap presets, themes that travel as `.omptheme` files,
   adjustable transparency, Reduced Effects for low-end PCs.
 
+## What's new in v0.15.3 — the black box
+
+- **The flight recorder.** OMP now logs every boot decision, graphics-mode
+  grade, paint verification and engine operation into a rolling log file in
+  its data folder. When something goes wrong, the story of exactly what
+  happened is already on disk — no more debugging from vibes.
+- **The Desktop report.** When OMP hits trouble — a boot that never painted,
+  a crash, a recovery — a file named **OMP-report.txt appears on the
+  Desktop by itself**, written by native code that works even when the
+  interface is completely dead. It contains the boot log, the WebView2
+  runtime version, the graphics-mode decisions and the engine probe trail,
+  plus plain-language instructions for the most common causes. The user
+  just drags it into a chat — no buttons, no copying, no in-app UI needed.
+- **Plain-window escalation.** If the interface fails to boot twice in a
+  row, OMP launches as a **plain opaque window** — no transparency, no DWM
+  glass material — the most conservative surface Windows can draw. Even
+  compositor-level breakage cannot stop the app; at that point the Desktop
+  report names the WebView2 runtime as the suspect and links the official
+  repair installer.
+- **Report a problem, everywhere.** Settings → Report a problem: one click
+  copies the full report, another saves it to the Desktop. The crash banner
+  and the player rescue card now deliver the same complete report with a
+  single tap.
+
 ## What's new in v0.15.2 — playback that cannot die
 
 - **The video engine joins the self-healing system.** v0.15.1 taught the

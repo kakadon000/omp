@@ -1106,9 +1106,9 @@ export function Player({ settings }: { settings: Settings }) {
                   className="btn"
                   onClick={async () => {
                     try {
-                      const shell = await invoke<Record<string, unknown>>("shell_info").catch(() => null);
-                      const d = await invoke<Record<string, unknown>>("mpv_diag").catch(() => null);
-                      await navigator.clipboard.writeText(JSON.stringify({ app: APP_VERSION, shell, engine: eng.kind, diag: d }, null, 2));
+                      // v0.15.3 — the full flight-recorder report, plain text
+                      const text = (await invoke<string>("omp_diag_pack")) ?? "";
+                      await navigator.clipboard.writeText(text);
                       toast("Diagnostics copied — paste them to the bot", "ok");
                     } catch { toast("Copy failed", "err"); }
                   }}
