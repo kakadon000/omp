@@ -259,3 +259,220 @@ pub fn repair_prompt() {
         win::open_in_browser(WEBVIEW2_URL);
     }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// v0.15.6 — PRE-BOOT WEBVIEW RECOVERY.
+//
+// The v0.15.5 field report (four window profiles, four IDENTICAL
+// 0x8007139F) proved the killer was never window style. Tauri builds the
+// splashscreen — and with it the process's ONE WebView2 browser process —
+// BEFORE the setup hook runs, using wry's default browser arguments. Every
+// later window must request the SAME arguments or WebView2 answers
+// ERROR_INVALID_STATE (0x8007139F). v0.15.1–v0.15.5 broke that rule under
+// SAFE_MODE (--disable-gpu), and SAFE_MODE is active on every fresh
+// install (probe boot) and every post-crash boot (rescue) — six release
+// rounds of death on the reporting machine. The differing args are gone
+// from lib.rs now (see THE BROWSER-ARGS RULE there).
+//
+// This layer hardens the OTHER classic producers of the same error:
+//   1. orphaned msedgewebview2.exe processes from a crashed session still
+//      holding the OMP user-data folder with OLD browser arguments —
+//      swept before anything is built;
+//   2. a corrupted browser profile (EBWebView) — factory-reset after
+//      repeated webview-creation failures (webview.dirty marker, written
+//      by the window ladder when every rung fails, cleared by ui_ready).
+//
+// webview_recovery() runs from run() after preflight() and before the
+// Tauri builder. It is marker-gated: a healthy machine pays ZERO cost.
+// Everything is plain std (tasklist / powershell / fs) — no new deps, no
+// raw FFI, and it can never panic the boot.
+
+/// what recovery did this boot ("" = nothing). setup() reads it once the
+/// app exists and copies it into the boot log. Written only on Windows by
+/// webview_recovery(); on other platforms it stays empty.
+static RECOVERY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+pub fn recovery_note() -> String {
+    RECOVERY.get().map(|s| s.as_str()).unwrap_or("").to_string()
+}
+
+/// Tauri's app_data_dir() on Windows = %APPDATA%\<identifier> — the same
+/// folder the boot markers (ui.ok, session.dirty, webview.dirty, …) live in.
+#[cfg(windows)]
+fn marker_dir() -> Option<PathBuf> {
+    std::env::var_os("APPDATA").map(|p| PathBuf::from(p).join("app.omp.player"))
+}
+
+/// The WebView2 browser-profile folder (user data folder): tauri defaults it
+/// to %LOCALAPPDATA%\<identifier>\EBWebView. Wiping it is a browser factory
+/// reset: cache, service workers, GPU shader cache and site logins are gone,
+/// but the folder is recreated fresh on the next engine start.
+#[cfg(windows)]
+fn browser_profile_dir() -> Option<PathBuf> {
+    std::env::var_os("LOCALAPPDATA")
+        .map(|p| PathBuf::from(p).join("app.omp.player").join("EBWebView"))
+}
+
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// true when another OMP.exe instance is alive (NOT counting this process).
+/// The zombie sweep must never touch a running instance's webview children.
+#[cfg(windows)]
+fn omp_already_running() -> bool {
+    use std::os::windows::process::CommandExt;
+    let Ok(out) = std::process::Command::new("tasklist")
+        .args(["/FI", "IMAGENAME eq OMP.exe", "/FO", "CSV", "/NH"])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+    else {
+        return false; // cannot tell → assume not running (sweep is safe pre-Tauri)
+    };
+    let me = std::process::id();
+    String::from_utf8_lossy(&out.stdout).lines().any(|l| {
+        // rows look like: "OMP.exe","1234","Console","1","123,456 K"
+        let mut f = l.split(',');
+        let name = f.next().unwrap_or("").trim_matches('"');
+        let pid = f.next().unwrap_or("").trim_matches('"');
+        name.eq_ignore_ascii_case("OMP.exe")
+            && pid.parse::<u32>().map(|p| p != me).unwrap_or(false)
+    })
+}
+
+/// Kill every msedgewebview2.exe whose command line is bound to OMP's user
+/// data folder. Runs BEFORE any window exists in THIS process, so the only
+/// webview processes that can match belong to crashed past sessions (or to
+/// another live OMP — excluded by omp_already_running() upstream). Returns
+/// the number of processes terminated. PowerShell is the only always-present
+/// builtin that can read another process's command line (wmic is gone on
+/// current Windows 11); the script uses single quotes only so the arg needs
+/// no nested double-quote escaping. Hard 8 s deadline: a wedged PowerShell
+/// must never stall the boot.
+#[cfg(windows)]
+fn sweep_webview_zombies() -> usize {
+    use std::os::windows::process::CommandExt;
+    use std::sync::mpsc;
+    let (tx, rx) = mpsc::channel::<usize>();
+    std::thread::spawn(move || {
+        let script = "Get-CimInstance Win32_Process -Filter 'Name=''msedgewebview2.exe''' | \
+Where-Object { $_.CommandLine -match 'app\\.omp\\.player' } | \
+ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; $_.ProcessId }";
+        let n = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                script,
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+            .map(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .filter(|l| l.trim().parse::<u32>().is_ok())
+                    .count()
+            })
+            .unwrap_or(0);
+        let _ = tx.send(n);
+    });
+    rx.recv_timeout(std::time::Duration::from_secs(8)).unwrap_or(0)
+}
+
+/// Factory-reset the WebView2 browser profile. std first (fast path), then a
+/// PowerShell Remove-Item retry that clears read-only bits std chokes on.
+/// Ok(false) = nothing to delete. Never deletes anything outside EBWebView.
+#[cfg(windows)]
+fn reset_browser_profile() -> Result<bool, String> {
+    let Some(p) = browser_profile_dir() else {
+        return Err("LOCALAPPDATA not resolvable".into());
+    };
+    if !p.exists() {
+        return Ok(false);
+    }
+    if std::fs::remove_dir_all(&p).is_ok() && !p.exists() {
+        return Ok(true);
+    }
+    use std::os::windows::process::CommandExt;
+    // single-quoted PS path — escape embedded single quotes the PS way
+    let lit = p.display().to_string().replace('\'', "''");
+    let script = format!("Remove-Item -LiteralPath '{lit}' -Recurse -Force -ErrorAction SilentlyContinue");
+    let retried = std::process::Command::new("powershell")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &script,
+        ])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if retried && !p.exists() {
+        Ok(true)
+    } else {
+        Err("EBWebView folder is locked even after the zombie sweep".into())
+    }
+}
+
+/// THE ENTRY POINT — called from run() before the Tauri builder. Gated on
+/// trouble markers so healthy machines pay nothing:
+///   session.dirty / ui.failsafe → the last session ended badly → sweep
+///                                 orphaned engine processes;
+///   webview.dirty (count)       → the window ladder failed entirely in a
+///                                 past launch → sweep + profile reset, at
+///                                 most 3 times (after that we stop wiping
+///                                 logins and the report asks for a manual
+///                                 delete — a reset loop we cannot prove is
+///                                 helping must not eat logins forever).
+#[cfg(windows)]
+pub fn webview_recovery() {
+    let Some(md) = marker_dir() else { return };
+    if !md.is_dir() {
+        return; // never ran on this machine — nothing to recover
+    }
+    let has = |n: &str| md.join(n).is_file();
+    let dirty_session = has("session.dirty") || has("ui.failsafe");
+    let wv_dirty: u32 = std::fs::read_to_string(md.join("webview.dirty"))
+        .ok()
+        .and_then(|s| s.trim().parse().ok())
+        .unwrap_or(0);
+    if !dirty_session && wv_dirty == 0 {
+        return; // healthy machine — zero cost, zero risk
+    }
+
+    let mut notes: Vec<String> = Vec::new();
+
+    if omp_already_running() {
+        // A live instance owns the browser profile — sweeping or resetting
+        // anything under it would only break the running OMP. This second
+        // process will be closed by the single-instance plugin right after
+        // the builder comes up.
+        let _ = RECOVERY.set("another OMP.exe is alive — recovery skipped".into());
+        return;
+    }
+    let killed = sweep_webview_zombies();
+    if killed > 0 {
+        notes.push(format!("swept {killed} orphaned msedgewebview2.exe"));
+    }
+
+    if wv_dirty > 0 && wv_dirty <= 3 {
+        match reset_browser_profile() {
+            Ok(true) => notes.push("browser profile (EBWebView) factory-reset".into()),
+            Ok(false) => notes.push("browser profile absent — reset not needed".into()),
+            Err(e) => notes.push(format!("browser profile reset FAILED: {e}")),
+        }
+    } else if wv_dirty > 3 {
+        notes.push("webview.dirty past 3 — leaving the profile alone".into());
+    }
+
+    if !notes.is_empty() {
+        let _ = RECOVERY.set(notes.join(" · "));
+    }
+}
+
+#[cfg(not(windows))]
+pub fn webview_recovery() {}

@@ -134,11 +134,14 @@ static BOOT_SHOWN: AtomicBool = AtomicBool::new(false);
 /// v0.15.1 — safe graphics mode. Some machines (broken GPU drivers, broken
 /// WebView2 updates) never paint a first webview frame: the window shows the
 /// DWM material with NOTHING on it — the "see-through window" reports. Those
-/// launches are relaunched with --disable-gpu (software webview rendering),
-/// which paints reliably everywhere. Decided from markers at setup:
+/// launches get help through software VIDEO (SAFE_VIDEO), the reduced-glass
+/// CSS class, the plain-window ladder rungs and the boot handshake — NEVER
+/// through browser arguments anymore (v0.15.6, THE BROWSER-ARGS RULE in
+/// setup(): any difference between windows is fatal, ERROR_INVALID_STATE
+/// 0x8007139F). Decided from markers at setup:
 ///   ui.ok       the UI proved itself at least once (any successful launch)
 ///   ui.failsafe the last launch needed the 8s failsafe (one-shot, consumed)
-///   ui.safe     sticky safe-graphics mode (software rendering worked here)
+///   ui.safe     sticky safe mode (a rescued launch worked here)
 pub(crate) static SAFE_MODE: AtomicBool = AtomicBool::new(false);
 
 /// v0.15.1 — WHY this launch runs in safe mode. Rescue-graded (the last
@@ -202,6 +205,9 @@ fn ui_ready(app: tauri::AppHandle) -> serde_json::Value {
     // v0.15.3 — the interface is ALIVE: the consecutive-failsafe streak ends
     if let Ok(d) = app.path().app_data_dir() {
         let _ = std::fs::remove_file(d.join("ui.fscount"));
+        // v0.15.6 — the machine's webview demonstrably works again: the
+        // next-boot profile-reset marker is obsolete
+        let _ = std::fs::remove_file(d.join("webview.dirty"));
     }
     bootlog::log(&app, "handshake", &format!("ui_ready — interface alive (safe={safe}) · {}", bootlog::states_line(&app)));
     if let Ok(d) = app.path().app_data_dir() {
@@ -342,15 +348,13 @@ fn build_widget(app: &tauri::AppHandle) -> bool {
     .shadow(false)
     .focused(false)
     .visible(true);
-    // v0.15.1 — safe graphics mode applies to the widget too: a machine whose
-    // webview GPU path is broken would render the widget exactly as blank as
-    // the main window was.
+    // v0.15.1 — safe graphics mode applies to the widget too — through the
+    // reduced-glass CSS class ONLY (v0.15.6): browser arguments must NEVER
+    // differ between windows of this process. The splashscreen owns the
+    // process's single WebView2 environment; a second request with different
+    // args dies with ERROR_INVALID_STATE (0x8007139F).
     let widget = if SAFE_MODE.load(Ordering::Relaxed) {
-        widget
-            .additional_browser_args(
-                "--disable-gpu --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection",
-            )
-            .initialization_script("document.documentElement.classList.add('reduced');")
+        widget.initialization_script("document.documentElement.classList.add('reduced');")
     } else {
         widget
     };
@@ -876,6 +880,11 @@ pub fn run() {
     //                dialog naming the failure + a Desktop report.
     bootguard::install_panic_hook();
     bootguard::preflight();
+    // v0.15.6 — PRE-BOOT WEBVIEW RECOVERY, still before ANY Tauri machinery:
+    // sweeps msedgewebview2.exe orphans left by crashed sessions and, after
+    // repeated webview-creation failures, factory-resets the browser profile.
+    // Marker-gated — a healthy machine pays nothing. Details in bootguard.rs.
+    bootguard::webview_recovery();
     let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
     tauri::Builder::default()
         // MUST be the first plugin: catches second launches (double-clicking
@@ -1048,6 +1057,11 @@ pub fn run() {
             let apph = app.handle().clone();
             bootlog::log(&apph, "boot", &format!("OMP v{} starting", env!("CARGO_PKG_VERSION")));
             bootlog::log(&apph, "boot", &bootlog::states_line(&apph));
+            // v0.15.6 — what the pre-boot recovery swept/reset before we got here
+            let rec = bootguard::recovery_note();
+            if !rec.is_empty() {
+                bootlog::log(&apph, "boot", &format!("pre-boot webview recovery: {rec}"));
+            }
             // v0.15.3 — CONSECUTIVE-FAILSAFE ESCALATION. ui.fscount counts how
             // many launches in a row never painted. At 2+, even the safe-mode
             // glass stack is distrusted: the window becomes a plain opaque
@@ -1071,31 +1085,56 @@ pub fn run() {
                 );
             }
             // v0.15.1 — the main window is built HERE (not in tauri.conf.json)
-            // so a machine with a broken webview GPU path can be launched with
-            // --disable-gpu. The window stays INVISIBLE until the webview
-            // proves it rendered something (ui_ready) — no more see-through
-            // windows with nothing painted inside.
+            // so its surface can adapt to the machine. The window stays
+            // INVISIBLE until the webview proves it rendered something
+            // (ui_ready) — no more see-through windows with nothing painted
+            // inside.
             // v0.15.5 — THE WINDOW LADDER. The first real field report (the
-            // v0.15.4 OMP-report.txt) cracked it: WebView2 runtime present and
-            // healthy, but creating the MAIN window's webview died with
-            // HRESULT 0x8007139F ("The group or resource is not in the correct
-            // state") — while the splashscreen, created moments earlier with
-            // nearly identical flags, succeeded. The deltas between them:
-            // shadow(true) and the safe-mode --disable-gpu browser args. On
-            // machines in a broken composition state, the fancy frameless
-            // transparent webview creation can fail exactly this way — and one
-            // failed creation used to kill the whole app (four rounds of
-            // "nothing runs"). So the main window is now built on a LADDER of
-            // four progressively plainer window profiles; the first that
-            // builds wins and is remembered (ui.winrung) so later boots go
-            // straight to it. A machine that rejects glass gets a window that
-            // WORKS instead of no app at all.
+            // v0.15.4 OMP-report.txt) showed WebView2 dying with HRESULT
+            // 0x8007139F while creating the MAIN window — while the
+            // splashscreen, created moments earlier, succeeded. v0.15.5
+            // answered with a ladder of window styles; the v0.15.5 field
+            // report answered back: ALL FOUR rungs failed IDENTICALLY — so
+            // the style was never the problem. The real difference between
+            // the working splash and every dying rung was THE BROWSER
+            // ARGUMENTS (see THE BROWSER-ARGS RULE below). The ladder stays:
+            // it is still the right answer for machines that reject fancy
+            // window surfaces — but the args poison is gone.
+            // ============================================================
+            // v0.15.6 — THE BROWSER-ARGS RULE. NO additional_browser_args on
+            // ANY window, on ANY rung, in ANY mode. Forever.
+            //
+            // Tauri creates the config-defined splashscreen — and with it
+            // the process's ONE WebView2 browser process — BEFORE this setup
+            // hook runs, with wry's DEFAULT arguments. WebView2 allows one
+            // browser process per user-data folder, started with the FIRST
+            // environment's options; a later environment request carrying
+            // DIFFERENT additional arguments is answered with
+            // ERROR_INVALID_STATE — HRESULT 0x8007139F, the exact error in
+            // both field reports.
+            //
+            // v0.15.1–v0.15.5 passed --disable-gpu here whenever SAFE_MODE
+            // was active — and SAFE_MODE is active on EVERY fresh install
+            // (the probe boot, !booted_once) and EVERY post-crash boot
+            // (rescue, session.dirty). On the reporting machine that meant
+            // every launch since v0.15.1 died before the window existed —
+            // six release rounds, one self-inflicted wound.
+            //
+            // Even hand-typed copies of wry's default string are NOT safe:
+            // wry appends autoplay/proxy arguments per webview, so any
+            // explicit string misses the real effective set. The only
+            // correct value is NONE — identical to the splashscreen.
+            //
+            // Only per-webview SURFACE things may vary: window styles (this
+            // ladder) and initialization scripts (per-webview, environment-
+            // safe). SAFE_MODE keeps its meaning through SAFE_VIDEO (mpv
+            // WARP), the reduced-glass CSS class and these rungs.
+            // ============================================================
             let build_rung = |app: &tauri::App, rung: u8| -> Result<tauri::WebviewWindow, tauri::Error> {
-                // rung 1: the full glass profile (what v0.15.0–v0.15.4 always did)
-                // rung 2: no shadow — the one delta vs the splash that worked
+                // rung 1: the full glass profile
+                // rung 2: no shadow
                 // rung 3: no transparency — plain opaque frameless window
-                // rung 4: native decorations + no custom GPU args — the most
-                //         vanilla WebView2 surface Windows can produce
+                // rung 4: native decorations — the most vanilla surface
                 let transp = rung <= 2 && !plain_window;
                 let mut b = tauri::WebviewWindowBuilder::new(
                     app,
@@ -1111,20 +1150,11 @@ pub fn run() {
                 .center()
                 .shadow(rung <= 2);
                 if SAFE_MODE.load(Ordering::Relaxed) {
-                    if rung >= 4 {
-                        // tauri's own default browser args — WITHOUT --disable-gpu
-                        b = b.additional_browser_args(
-                            "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection",
-                        );
-                    } else {
-                        // software webview rendering + reduced glass from frame 1
-                        b = b.additional_browser_args(
-                            "--disable-gpu --disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection",
-                        )
-                        .initialization_script(
-                            "document.documentElement.classList.add('reduced');document.documentElement.dataset.safegfx='1';",
-                        );
-                    }
+                    // reduced glass from frame 1 — a per-webview script,
+                    // NOT an environment option: this is allowed to vary
+                    b = b.initialization_script(
+                        "document.documentElement.classList.add('reduced');document.documentElement.dataset.safegfx='1';",
+                    );
                 }
                 b.build()
             };
@@ -1167,8 +1197,23 @@ pub fn run() {
                 }
             }
             let Some(win_rung) = win_rung else {
+                // v0.15.6 — remember the catastrophe: the next boot sweeps
+                // zombie engine processes and factory-resets the browser
+                // profile (EBWebView) BEFORE Tauri builds anything. Cleared
+                // again by ui_ready once the interface proves itself. Capped
+                // at 3 attempts so a lost cause never eats logins forever.
+                if let Some(d) = &data_dir {
+                    let n: u32 = std::fs::read_to_string(d.join("webview.dirty"))
+                        .ok()
+                        .and_then(|s| s.trim().parse().ok())
+                        .unwrap_or(0)
+                        + 1;
+                    let _ = std::fs::write(d.join("webview.dirty"), n.to_string());
+                }
+                bootlog::log(&apph, "boot", "ALL window profiles failed — webview.dirty set for next-boot recovery");
                 return Err(format!(
-                    "OMP could not create its main window on any of 4 window profiles ({}) — if this persists, close OMP, delete the folders AppData\\Local\\app.omp.player and AppData\\Roaming\\app.omp.player, then open OMP again",
+                    "OMP could not create its main window on any of {} window profiles ({}) — if this persists, close OMP, then simply open it again: the next launch clears leftover engine processes and resets the browser profile automatically",
+                    rung_errors.len(),
                     rung_errors.join(" | ")
                 )
                 .into());

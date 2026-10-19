@@ -28,6 +28,35 @@ distinctive, not into reinventing video decoding.
   you pick**, ten one-tap presets, themes that travel as `.omptheme` files,
   adjustable transparency, Reduced Effects for low-end PCs.
 
+## What's new in v0.15.6 — the engine rule
+
+- **Your second report cracked it for real.** The v0.15.5 report showed all
+  four window profiles failing with the IDENTICAL error — which proved the
+  window style was never the problem. The real difference between the
+  splashscreen (which worked) and every main-window rung (which died) was
+  the **browser arguments**: OMP's safety mode — active on every fresh
+  install and every post-crash boot — asked the WebView2 engine for
+  different startup flags than the splash window had already started the
+  engine with. Windows allows exactly one engine start per app profile, so
+  any mismatch means nothing may open: **0x8007139F**, every launch, since
+  v0.15.1.
+- **THE ENGINE RULE.** Browser arguments are now identical for every window
+  OMP ever creates — one rule, zero exceptions, and no hand-typed copies of
+  engine defaults (the engine appends its own flags per window, so only
+  *no custom args at all* is safe). Safety mode keeps working through
+  software video, reduced glass, the plain-window rungs and the boot
+  handshake — the window ladder from v0.15.5 stays exactly as it was.
+- **Pre-boot engine recovery.** Before the interface builds, OMP now sweeps
+  away `msedgewebview2.exe` processes left behind by crashed sessions
+  (they hold the browser profile with stale engine flags). Never touches a
+  running OMP instance, and on healthy machines it costs nothing.
+- **Self-healing browser profile.** If window creation ever fails on every
+  rung, the next launch **factory-resets OMP's own browser profile
+  (EBWebView) automatically** — no more manual folder deleting. Capped at
+  three attempts, cleared the moment the interface proves itself alive.
+- **Everything else stays**: never-silent dialogs, Desktop reports, panic
+  guard, embedded WebView2 installer, crash memory, mpv self-healing.
+
 ## What's new in v0.15.5 — the ladder
 
 - **The field report cracked the case.** The first OMP-report.txt from the

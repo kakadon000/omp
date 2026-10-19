@@ -92,9 +92,11 @@ export default function App() {
   const [crashRecov, setCrashRecov] = useState(false);
   // latest media-entry router, shared with the drag & drop subscription
   const openPathRef = useRef<(p: string) => void>(() => {});
-  // v0.15.1 — safe graphics mode (Rust launches the webview with --disable-gpu
-  // when this machine's GPU path broke): glass effects stay reduced no matter
-  // what the settings say, software-rasterized backdrop blur is a CPU fire
+  // v0.15.1 — safe graphics mode (Rust sets the safegfx dataset on this
+  // webview when the machine is in maximum-compatibility mode — software
+  // video, plain-window rungs; browser args are never touched, v0.15.6):
+  // glass effects stay reduced no matter what the settings say, software-
+  // rasterized backdrop blur is a CPU fire
   const safeGfx = useRef(false);
 
   // boot: apply settings, close the native splash, THEN idle-work
