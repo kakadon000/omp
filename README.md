@@ -28,6 +28,30 @@ distinctive, not into reinventing video decoding.
   you pick**, ten one-tap presets, themes that travel as `.omptheme` files,
   adjustable transparency, Reduced Effects for low-end PCs.
 
+## What's new in v0.15.7 — safe graphics, the right way
+
+- **The engine rule gets its second half.** v0.15.6 fixed window creation by
+  giving every window identical engine flags — but that also removed the only
+  fix that ever made a black-screen machine paint: safe mode could no longer
+  switch the interface renderer to software. A machine with a broken GPU
+  compositor runs OMP's interface code perfectly while the window stays
+  black — the handshake even passes, so no report fires. v0.15.7 restores the
+  software-rendering rescue through the one channel that cannot create an
+  engine mismatch: a single process-wide override that Microsoft's own
+  WebView2 loader applies **identically to every window** — the splash, all
+  four window profiles and the desktop widget. Error 0x8007139F stays
+  impossible in both modes, by construction.
+- **The silent single-instance lock.** A hung, invisible OMP.exe left behind
+  by a crashed session kept the "already running" lock forever — every new
+  launch was swallowed with no window, no report, no log. OMP now clears a
+  windowless leftover older than two minutes before the engine starts. A
+  running OMP with a visible window is never touched.
+- **The boot log now records the exact engine flags** each launch runs with,
+  so the next report tells us instantly which rendering path was live.
+- Everything else stays: the window ladder with its remembered profile,
+  never-silent dialogs, Desktop reports, the panic guard, pre-boot recovery
+  and the embedded WebView2 installer.
+
 ## What's new in v0.15.6 — the engine rule
 
 - **Your second report cracked it for real.** The v0.15.5 report showed all

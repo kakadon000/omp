@@ -281,6 +281,10 @@ pub fn repair_prompt() {
 //   2. a corrupted browser profile (EBWebView) — factory-reset after
 //      repeated webview-creation failures (webview.dirty marker, written
 //      by the window ladder when every rung fails, cleared by ui_ready).
+//   3. (v0.15.7) a HUNG, WINDOWLESS OMP.exe leftover from a crashed
+//      session — it holds the single-instance lock, so every new launch
+//      is swallowed SILENTLY: no window, no report, no log. Cleared
+//      before anything is built; a visible running OMP is never touched.
 //
 // webview_recovery() runs from run() after preflight() and before the
 // Tauri builder. It is marker-gated: a healthy machine pays ZERO cost.
@@ -316,33 +320,71 @@ fn browser_profile_dir() -> Option<PathBuf> {
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-/// true when another OMP.exe instance is alive (NOT counting this process).
-/// The zombie sweep must never touch a running instance's webview children.
+/// One PowerShell pass over the OMP.exe process list that answers BOTH
+/// questions v0.15.7 needs before the Tauri builder exists:
+///   live    — is another OMP.exe running WITH a visible top-level window?
+///             (the main window or the desktop widget — a healthy OMP
+///             always owns one while it is usable). Such an instance owns
+///             the browser profile and will receive this launch through
+///             the single-instance handoff, so recovery must not touch
+///             anything.
+///   zombies — windowless OMP.exe processes (not this pid) older than
+///             120 seconds are killed on the spot and counted. A
+///             windowless OMP is either a launch still warming up (always
+///             far younger than 120 s — spared) or a hung leftover from a
+///             crashed session: it keeps the single-instance lock, so
+///             every new launch would be swallowed SILENTLY — no window,
+///             no report, no log (the "ran it, nothing happens" class).
+///             The 120 s floor protects background-playback sessions whose
+///             widget window is also hidden — they lose music only if
+///             windowless AND frozen for two full minutes.
+/// Returns (live, zombies_killed). Hard 8 s deadline like every recovery
+/// step; a wedged PowerShell never stalls the boot.
 #[cfg(windows)]
-fn omp_already_running() -> bool {
+fn omp_recon() -> (bool, usize) {
     use std::os::windows::process::CommandExt;
-    let Ok(out) = std::process::Command::new("tasklist")
-        .args(["/FI", "IMAGENAME eq OMP.exe", "/FO", "CSV", "/NH"])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-    else {
-        return false; // cannot tell → assume not running (sweep is safe pre-Tauri)
-    };
-    let me = std::process::id();
-    String::from_utf8_lossy(&out.stdout).lines().any(|l| {
-        // rows look like: "OMP.exe","1234","Console","1","123,456 K"
-        let mut f = l.split(',');
-        let name = f.next().unwrap_or("").trim_matches('"');
-        let pid = f.next().unwrap_or("").trim_matches('"');
-        name.eq_ignore_ascii_case("OMP.exe")
-            && pid.parse::<u32>().map(|p| p != me).unwrap_or(false)
-    })
+    use std::sync::mpsc;
+    let (tx, rx) = mpsc::channel::<(bool, usize)>();
+    std::thread::spawn(move || {
+        let me = std::process::id();
+        let script = format!("$ps = Get-CimInstance Win32_Process -Filter 'Name=''OMP.exe''' | \
+Where-Object {{ $_.ProcessId -ne {me} }}; \
+$live = @($ps | Where-Object {{ $_.MainWindowHandle -ne 0 }}).Count; \
+Write-Output ('LIVE=' + $live); \
+$ps | Where-Object {{ $_.MainWindowHandle -eq 0 -and $_.CreationDate -lt (Get-Date).AddSeconds(-120) }} | \
+ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue; Write-Output $_.ProcessId }}");
+        let mut live = false;
+        let mut killed = 0usize;
+        if let Ok(out) = std::process::Command::new("powershell")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                &script,
+            ])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+        {
+            for line in String::from_utf8_lossy(&out.stdout).lines() {
+                let l = line.trim();
+                if let Some(n) = l.strip_prefix("LIVE=") {
+                    live = n.trim().parse::<u32>().map(|c| c > 0).unwrap_or(false);
+                } else if l.parse::<u32>().is_ok() {
+                    killed += 1;
+                }
+            }
+        }
+        let _ = tx.send((live, killed));
+    });
+    rx.recv_timeout(std::time::Duration::from_secs(8)).unwrap_or((false, 0))
 }
 
 /// Kill every msedgewebview2.exe whose command line is bound to OMP's user
 /// data folder. Runs BEFORE any window exists in THIS process, so the only
 /// webview processes that can match belong to crashed past sessions (or to
-/// another live OMP — excluded by omp_already_running() upstream). Returns
+/// another live OMP — excluded by omp_recon() upstream). Returns
 /// the number of processes terminated. PowerShell is the only always-present
 /// builtin that can read another process's command line (wmic is gone on
 /// current Windows 11); the script uses single quotes only so the arg needs
@@ -446,13 +488,23 @@ pub fn webview_recovery() {
 
     let mut notes: Vec<String> = Vec::new();
 
-    if omp_already_running() {
+    // v0.15.7 — visible-instance check AND windowless-zombie clear in one
+    // pass. A windowless OMP.exe is NOT a live instance: if it is older
+    // than 120 s it is a hung leftover, and leaving it alive means the
+    // single-instance plugin swallows THIS launch with zero output.
+    let (another_live, omp_zombies) = omp_recon();
+    if another_live {
         // A live instance owns the browser profile — sweeping or resetting
         // anything under it would only break the running OMP. This second
         // process will be closed by the single-instance plugin right after
         // the builder comes up.
         let _ = RECOVERY.set("another OMP.exe is alive — recovery skipped".into());
         return;
+    }
+    if omp_zombies > 0 {
+        notes.push(format!(
+            "cleared {omp_zombies} hung windowless OMP.exe leftover(s) that would have silently blocked this launch"
+        ));
     }
     let killed = sweep_webview_zombies();
     if killed > 0 {

@@ -864,6 +864,88 @@ fn online_innertube_search(query: String, max: Option<u32>) -> Result<String, St
     serde_json::to_string(&out).map_err(|e| e.to_string())
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// v0.15.7 — THE GPU POLICY RULE (part 2 of the engine rule).
+//
+// v0.15.6 made the browser-args rule absolute: NO per-window
+// additional_browser_args anywhere, because any difference between two
+// webview creations of this process is fatal (ERROR_INVALID_STATE,
+// 0x8007139F — six release rounds of it). That fixed window creation, but
+// the v0.15.6 field test surfaced the cost: SAFE_MODE no longer had ANY
+// way to take the GPU out of the webview's rendering loop. A machine with
+// a broken GPU compositor runs the webview's JavaScript on the CPU just
+// fine — the handshake passes, ui_ready fires, no failsafe, no report —
+// while the screen stays BLACK. That is the original v0.15.1-era disease,
+// alive again with no cure shipped.
+//
+// The way back is the one channel that CANNOT create an args mismatch:
+// the WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS environment variable. The
+// WebView2 loader documents (WebView2.h, CreateCoreWebView2Environment-
+// WithOptions) that when this variable is present it REPLACES the
+// additionalBrowserArguments of EVERY environment creation in the
+// process — no merging, no per-window variation possible. It is set (or
+// removed) here, before the Tauri builder exists, before the config
+// splashscreen, before ANY window:
+//   safe mode   → wry's exact default flags + --disable-gpu
+//                 (default string verified against wry-v0.57.0
+//                 src/webview2/mod.rs; tauri never sets the autoplay
+//                 attribute, so the wry default is static for us)
+//   normal mode → variable removed; every window carries wry's identical
+//                 default string (v0.15.6 behavior, unchanged)
+// Both modes are uniform BY CONSTRUCTION — one process, one rule, zero
+// exceptions, 0x8007139F impossible in either.
+//
+// decide_boot_modes() is the single decision point for how THIS boot
+// runs. It reads the same on-disk markers setup() used to read (the same
+// folder — tauri's app_data_dir() = %APPDATA%\app.omp.player), stores the
+// decision into the SAFE_* statics and MUST run before Builder::build().
+// setup() consumes the statics and never re-derives them.
+fn decide_boot_modes() {
+    #[cfg(windows)]
+    {
+        let markers = std::env::var_os("APPDATA")
+            .map(|p| std::path::PathBuf::from(p).join("app.omp.player"));
+        let has = |name: &str| {
+            markers
+                .as_ref()
+                .map(|d| d.join(name).is_file())
+                .unwrap_or(false)
+        };
+        let booted_once = has("ui.ok");
+        let rescued = has("ui.failsafe");
+        let safe_sticky = has("ui.safe");
+        let crashed_last = has("session.dirty");
+
+        // identical formula to the one setup() used through v0.15.6 —
+        // safe graphics when: the last launch needed the failsafe, OR a
+        // previous safe launch succeeded (sticky), OR the UI has NEVER
+        // come up on this machine (fresh-install probe), OR the last
+        // session did not exit cleanly (crash memory rescue).
+        let safe = rescued || safe_sticky || !booted_once || crashed_last;
+        SAFE_MODE.store(safe, Ordering::Relaxed);
+        // only a PROVEN-broken machine keeps safe mode after a success —
+        // a probe launch (fresh install) graduates back to the GPU path
+        SAFE_STICKY.store(rescued || safe_sticky || crashed_last, Ordering::Relaxed);
+        // v0.15.2 — the video engine follows the webview: same wall, same fix
+        SAFE_VIDEO.store(
+            SAFE_MODE.load(Ordering::Relaxed) || SAFE_STICKY.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
+        CRASHED_LAST.store(crashed_last, Ordering::Relaxed);
+
+        // THE ENGINE FLAGS — fixed for the whole process lifetime; every
+        // WebView2 environment creation in this process reads them.
+        if safe {
+            std::env::set_var(
+                "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+                "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-gpu",
+            );
+        } else {
+            std::env::remove_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS");
+        }
+    }
+}
+
 pub fn run() {
     // v0.15.4 — NEVER SILENT. Every previous "nothing at all happens" report
     // traced to deaths BEFORE the Tauri app existed: a missing/broken WebView2
@@ -885,6 +967,9 @@ pub fn run() {
     // repeated webview-creation failures, factory-resets the browser profile.
     // Marker-gated — a healthy machine pays nothing. Details in bootguard.rs.
     bootguard::webview_recovery();
+    // v0.15.7 — decide how THIS boot runs (safe mode, engine flags) BEFORE
+    // anything that can create a webview. THE GPU POLICY RULE, above.
+    decide_boot_modes();
     let built = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
     tauri::Builder::default()
         // MUST be the first plugin: catches second launches (double-clicking
@@ -1024,31 +1109,12 @@ pub fn run() {
                     .unwrap_or(false)
             };
             let booted_once = has_marker("ui.ok");
-            let rescued = has_marker("ui.failsafe");
-            let safe_sticky = has_marker("ui.safe");
-            // v0.15.2 — crash memory: session.dirty means the previous session
-            // never said goodbye (the process died mid-playback, was hard-killed
-            // or the machine lost power). That is the strongest broken-machine
-            // signal we get — grade this launch as a rescue for BOTH engines.
-            let crashed_last = has_marker("session.dirty");
-            CRASHED_LAST.store(crashed_last, Ordering::Relaxed);
-            // Safe graphics when: the last launch needed the failsafe, OR a
-            // previous safe launch succeeded (sticky), OR the UI has NEVER
-            // come up on this machine (fresh install → first launch probes in
-            // software, which paints reliably on every GPU; a healthy machine
-            // exits safe mode automatically on its second launch).
-            if rescued || safe_sticky || !booted_once || crashed_last {
-                SAFE_MODE.store(true, Ordering::Relaxed);
-            }
-            // only a PROVEN-broken machine keeps safe mode after a success —
-            // a probe launch (fresh install) graduates back to the GPU path
-            SAFE_STICKY.store(rescued || safe_sticky || crashed_last, Ordering::Relaxed);
-            // v0.15.2 — the video engine follows the webview: if this launch
-            // runs software UI, it runs software video too. Same wall, same fix.
-            SAFE_VIDEO.store(
-                SAFE_MODE.load(Ordering::Relaxed) || SAFE_STICKY.load(Ordering::Relaxed),
-                Ordering::Relaxed,
-            );
+            // v0.15.7 — SAFE_MODE / SAFE_STICKY / SAFE_VIDEO / CRASHED_LAST are
+            // decided BEFORE the builder (decide_boot_modes, THE GPU POLICY
+            // RULE) because the webview engine flags must be fixed before the
+            // FIRST webview exists — the config splashscreen included. This
+            // hook only consumes the decision; it never re-derives it.
+            let crashed_last = CRASHED_LAST.load(Ordering::Relaxed);
             // consume the one-shot rescue marker (ui_ready re-decides it)
             if let Some(d) = &data_dir {
                 let _ = std::fs::remove_file(d.join("ui.failsafe"));
@@ -1057,6 +1123,11 @@ pub fn run() {
             let apph = app.handle().clone();
             bootlog::log(&apph, "boot", &format!("OMP v{} starting", env!("CARGO_PKG_VERSION")));
             bootlog::log(&apph, "boot", &bootlog::states_line(&apph));
+            // v0.15.7 — the exact engine flags this whole boot runs with
+            // (set process-wide by decide_boot_modes before any webview)
+            let flags = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS")
+                .unwrap_or_else(|_| "engine defaults (no override)".into());
+            bootlog::log(&apph, "boot", &format!("webview engine flags: {flags}"));
             // v0.15.6 — what the pre-boot recovery swept/reset before we got here
             let rec = bootguard::recovery_note();
             if !rec.is_empty() {
