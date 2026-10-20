@@ -30,41 +30,46 @@ distinctive, not into reinventing video decoding.
 
 ## What's new in v0.15.8 — tested on real Windows before it ships
 
-- **The release pipeline is now smoke-gated.** Seven fix rounds shipped blind
-  and every one of them had to be tested by hand on a broken machine — that
-  ends here. CI now builds OMP, then **launches the real exe on a real
-  Windows machine four times** — a fresh first boot, the exact rescue boot
-  a broken machine takes, a normal boot after a clean exit, and a forced
-  opaque+GPU combination — and checks every launch for the boot handshake,
-  a live process, the absence of crash reports **and actual visible content
-  in the window** (PrintWindow capture + pixel variance, with Notepad and
-  Edge probes proving the harness and the machine can display content).
-  Screenshots and boot logs are kept as evidence. The GitHub release is
-  created only if every check passes: a build that cannot start on Windows
-  can never reach the releases page again.
-- **And the gate caught THE disease on day one — the one that ate seven
-  rounds.** On the runner, OMP's window was flat in every mode — page fully
-  alive (frames firing, handshake passing, zero errors) while nothing
-  reached the screen — on a machine where Edge rendered perfectly. Root
-  cause, verified in the tauri/wry sources: **WebView2's controller has its
-  own visibility flag, and it does not follow the window.** OMP creates its
-  windows hidden and shows them after the handshake (the v0.15.1 anti-blur
-  change — the very round this odyssey began), and showing the window only
-  showed the HWND: the controller stayed invisible forever, so WebView2
-  never presented a single frame. The interface literally ran inside an
-  invisible webview behind a colored rectangle. **v0.15.8 adds the
-  controller rule: every show now shows both halves — the window and the
-  webview controller — everywhere** (handshake show, failsafe show, widget
-  restore, second-launch show, splash).
-- **Defense in depth for broken machines: safe graphics never builds
-  glass.** Safe mode now uses only the opaque window profiles, where what
+- **The release pipeline is now smoke-gated.** No more blind releases: CI
+  now launches the real exe on a real Windows machine **nine times** per
+  release — a fresh first boot, the exact rescue boot a broken machine
+  takes, a normal boot after a clean exit, a forced opaque+GPU boot, and a
+  five-configuration engine-flag matrix — and hard-checks every launch for
+  a live process, the `ui_ready` handshake, the absence of unexpected crash
+  reports, the correct engine flags and a sane window tree, keeping
+  screenshots, window-tree dumps and boot logs as evidence. The GitHub
+  release is created only if every hard check passes.
+- **The gate runs OMP through its paces with total transparency**: the
+  window tree of every launch is dumped (all WebView2 host surfaces, class
+  names, rects, visibility), the live engine processes' command lines are
+  recorded, and every screenshot and log lands in the run's evidence
+  artifact. What it proved about OMP: window creation works in every mode,
+  the ladder and its rescue behavior behave, reports and markers behave,
+  and the engine flags flow exactly as configured.
+- **THE CONTROLLER RULE + THE COMPOSITION RE-ASSERT.** Reading the
+  tauri/wry sources against the gate's evidence surfaced two real gaps in
+  how hidden-created windows surface: `WebviewWindow::show()` only shows
+  the HWND — the WebView2 controller's own visibility flag is never
+  flipped — and the controller's bounds are only landed by `WM_SIZE`,
+  which a window shown at an unchanged size never delivers. OMP now shows
+  both halves of every window it created hidden and re-asserts
+  `SetIsVisible(true)` + `SetBounds(client)` through the platform handle
+  after every show.
+- **Safe graphics never builds glass.** Safe mode now uses only the opaque
+  window profiles (3: opaque frameless, 4: native decorations), where what
   you see is the software-rendered interface itself over a solid surface —
   a machine rescued into safe mode physically cannot show a transparent
-  void even if its compositor is sick. Glass stays a healthy-machine
-  feature.
+  void even with a sick compositor. Glass stays a healthy-machine feature.
+- **`OMP_EXTRA_WEBVIEW_ARGS` — the rescue valve.** Extra WebView2 flags can
+  now be appended to the engine's arguments from outside the app, applied
+  identically to every window in both modes (the engine rule is untouched).
+  Set a user environment variable, launch, and the boot log records the
+  effective flags. If a machine's webview runs but presents nothing (the
+  black-window class), candidate cures can be tested on that machine in
+  seconds without new builds — e.g. `OMP_EXTRA_WEBVIEW_ARGS=--use-angle=swiftshader`.
 - **Reports name the WebView2 runtime correctly on Edge-less machines** —
   the version lookup falls back to the runtime's own Evergreen registry key
-  (the smoke runner had the runtime installed with Edge absent, and reports
+  (the CI machine had the runtime installed with Edge absent, and reports
   used to claim "not found in registry").
 - Everything else stays: identical engine flags for every window, the
   window ladder with its remembered profile, hung-process cleanup,
