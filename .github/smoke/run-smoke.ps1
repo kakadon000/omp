@@ -25,10 +25,17 @@ if (-not ("WU32" -as [type])) {
     Add-Type -TypeDefinition @"
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 public struct WRECT { public int Left; public int Top; public int Right; public int Bottom; }
+public delegate bool EnumProc(IntPtr hwnd, IntPtr lp);
 public static class WU32 {
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
     [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hwnd, out WRECT rect);
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc cb, IntPtr lp);
+    [DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr hwnd, EnumProc cb, IntPtr lp);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+    [DllImport("user32.dll", CharSet=CharSet.Unicode)] public static extern int GetClassName(IntPtr hwnd, StringBuilder sb, int max);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
 }
 "@
 }
@@ -150,6 +157,71 @@ function Get-BitmapStats($bmp) {
         }
     } catch { Write-Host "pixel stats failed: $($_.Exception.Message)" }
     return $stats
+}
+
+function Dump-WindowTree([System.Diagnostics.Process]$proc, [string]$tag) {
+    # The ground truth of what OMP actually created: every top-level window
+    # of the process + every child (the WebView2 host chain), with class,
+    # rect and visibility. Plus the live msedgewebview2.exe command lines,
+    # which name the EFFECTIVE engine flags of this exact launch.
+    try {
+        $rows = New-Object 'System.Collections.Generic.List[object]'
+        $cb = [WU32+EnumProc]{ param($h, $l)
+            $wpid = [uint32]0
+            [void][WU32]::GetWindowThreadProcessId($h, [ref]$wpid)
+            if ($wpid -eq $script:ompPid) {
+                $sb = New-Object System.Text.StringBuilder 256
+                [void][WU32]::GetClassName($h, $sb, 256)
+                $r = New-Object WRECT
+                [void][WU32]::GetWindowRect($h, [ref]$r)
+                $rows.Add(@{
+                    hwnd = $h; cls = $sb.ToString(); vis = [WU32]::IsWindowVisible($h)
+                    l = $r.Left; t = $r.Top; w = ($r.Right - $r.Left); hgt = ($r.Bottom - $r.Top)
+                }) | Out-Null
+            }
+            return $true
+        }
+        [void][WU32]::EnumWindows($cb, [IntPtr]::Zero)
+        Write-Host "OMP window tree [$tag]:"
+        foreach ($t in $rows) {
+            Write-Host ("  top: hwnd={0} class='{1}' visible={2} rect={3}x{4} at {5},{6}" -f $t.hwnd, $t.cls, $t.vis, $t.w, $t.hgt, $t.l, $t.t)
+            $kids = New-Object 'System.Collections.Generic.List[object]'
+            $cb2 = [WU32+EnumProc]{ param($h, $l)
+                $sb = New-Object System.Text.StringBuilder 256
+                [void][WU32]::GetClassName($h, $sb, 256)
+                $r = New-Object WRECT
+                [void][WU32]::GetWindowRect($h, [ref]$r)
+                $kids.Add(@{
+                    hwnd = $h; cls = $sb.ToString(); vis = [WU32]::IsWindowVisible($h)
+                    l = $r.Left; t = $r.Top; w = ($r.Right - $r.Left); hgt = ($r.Bottom - $r.Top)
+                }) | Out-Null
+                return $true
+            }
+            [void][WU32]::EnumChildWindows($t.hwnd, $cb2, [IntPtr]::Zero)
+            foreach ($k in $kids) {
+                Write-Host ("    child: hwnd={0} class='{1}' visible={2} rect={3}x{4} at {5},{6}" -f $k.hwnd, $k.cls, $k.vis, $k.w, $k.hgt, $k.l, $k.t)
+                if ($k.w -gt 100 -and $k.hgt -gt 100) {
+                    $bmp = Save-WindowCapture $k.hwnd "$tag-child"
+                    if ($bmp) {
+                        $st = Get-BitmapStats $bmp
+                        Write-Host ("    child pixels: mean={0} std={1} distinct-colors={2}" -f $st.mean, $st.std, $st.colors)
+                        $bmp.Dispose()
+                    }
+                }
+            }
+        }
+        $ev = Get-CimInstance Win32_Process -Filter "name='msedgewebview2.exe'" -ErrorAction SilentlyContinue
+        if ($ev) {
+            Write-Host ("msedgewebview2 processes: {0}" -f ($ev | Measure-Object).Count)
+            foreach ($p in ($ev | Select-Object -First 3)) {
+                $cl = $p.CommandLine
+                if ($cl -and $cl.Length -gt 260) { $cl = $cl.Substring(0, 260) + "..." }
+                Write-Host "  args: $cl"
+            }
+        } else {
+            Write-Host "msedgewebview2 processes: NONE (the webview browser process is not running!)"
+        }
+    } catch { Write-Host "window tree dump failed: $($_.Exception.Message)" }
 }
 
 function Stop-AllOmp {
@@ -333,6 +405,8 @@ function Invoke-Launch([string]$tag, [int]$waitSec, [bool]$GateOn) {
     }
 
     if ($proc.MainWindowHandle -ne [IntPtr]::Zero) {
+        $script:ompPid = [uint32]$proc.Id
+        Dump-WindowTree $proc $tag
         $st = Measure-Window $proc $tag "omp[$tag]"
         if ($st.flat) {
             if ($GateOn) {
