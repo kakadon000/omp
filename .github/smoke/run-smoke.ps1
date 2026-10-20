@@ -483,6 +483,39 @@ foreach ($root in @($env:APPDATA, $env:LOCALAPPDATA)) {
 Write-Host "ui.winrung=3 planted, rescue markers cleared - expect rung 3 (opaque) + engine defaults (GPU)"
 $null = Invoke-Launch -tag "l4-opaque-gpu" -waitSec 30 -GateOn $edgeRenders
 
+# ---------- L5/L6: the presentation flag matrix ----------------------
+# The tree dumps proved the whole hwnd chain healthy while the DComp
+# surface presents nothing. Chromium's presentation on Windows goes
+# through DirectComposition; if THAT is the dead layer, the flag
+# --disable-direct-composition falls back to the legacy path.
+#   L5: normal mode (GPU) + no DirectComposition
+#   L6: rescue/safe mode (software) + no DirectComposition
+Write-Step "L5: opaque + GPU + --disable-direct-composition"
+Stop-AllOmp
+foreach ($root in @($env:APPDATA, $env:LOCALAPPDATA)) {
+    $ad = Join-Path $root "app.omp.player"
+    if (Test-Path $ad) {
+        Remove-Item -Force (Join-Path $ad "ui.safe") -ErrorAction SilentlyContinue
+        Remove-Item -Force (Join-Path $ad "ui.failsafe") -ErrorAction SilentlyContinue
+        Remove-Item -Force (Join-Path $ad "session.dirty") -ErrorAction SilentlyContinue
+        Set-Content -Path (Join-Path $ad "ui.winrung") -Value "3" -NoNewline
+    }
+}
+$env:OMP_EXTRA_WEBVIEW_ARGS = "--disable-direct-composition"
+Write-Host "OMP_EXTRA_WEBVIEW_ARGS=$env:OMP_EXTRA_WEBVIEW_ARGS"
+$null = Invoke-Launch -tag "l5-nodcomp-gpu" -waitSec 25 -GateOn $false
+Remove-Item Env:OMP_EXTRA_WEBVIEW_ARGS -ErrorAction SilentlyContinue
+
+Write-Step "L6: opaque + software + --disable-direct-composition (the rescue candidate)"
+Stop-AllOmp
+$dd = Join-Path $env:APPDATA "app.omp.player"
+Set-Content -Path (Join-Path $dd "ui.failsafe") -Value "1" -NoNewline
+Set-Content -Path (Join-Path $dd "session.dirty") -Value "1" -NoNewline
+$env:OMP_EXTRA_WEBVIEW_ARGS = "--disable-direct-composition"
+Write-Host "OMP_EXTRA_WEBVIEW_ARGS=$env:OMP_EXTRA_WEBVIEW_ARGS (safe mode active)"
+$null = Invoke-Launch -tag "l6-nodcomp-safe" -waitSec 25 -GateOn $false
+Remove-Item Env:OMP_EXTRA_WEBVIEW_ARGS -ErrorAction SilentlyContinue
+
 # ---------------------------------------------------------------------
 Write-Step "cleanup"
 Stop-AllOmp

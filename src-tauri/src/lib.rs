@@ -998,14 +998,30 @@ fn decide_boot_modes() {
 
         // THE ENGINE FLAGS — fixed for the whole process lifetime; every
         // WebView2 environment creation in this process reads them.
-        if safe {
-            std::env::set_var(
-                "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
-                "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection --disable-gpu",
-            );
+        // v0.15.8 — OMP_EXTRA_WEBVIEW_ARGS, the documented escape hatch:
+        // the engine variable itself is OWNED by this rule (set or removed,
+        // never merged), so extra flags ride along INSIDE it — appended to
+        // the SAME string every window receives, in both modes, keeping the
+        // engine rule intact. Used by the CI smoke gate's flag matrix and
+        // available as a rescue valve. In normal mode the variable is now
+        // set to wry's exact default string (verified against wry-v0.57.0
+        // sources; the loader replaces args with this value — identical
+        // behavior to removing it, since tauri never sets autoplay).
+        let extra = std::env::var("OMP_EXTRA_WEBVIEW_ARGS")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        let base = "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection";
+        let mut flags = if safe {
+            format!("{base} --disable-gpu")
         } else {
-            std::env::remove_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS");
+            base.to_string()
+        };
+        if !extra.is_empty() {
+            flags.push(' ');
+            flags.push_str(&extra);
         }
+        std::env::set_var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", &flags);
     }
 }
 
