@@ -1,4 +1,9 @@
-name: Release — Windows build
+name: Release — Windows build (smoke-gated)
+
+# PIPELINE: build → SMOKE (launch OMP 3x on a real Windows desktop) → publish.
+# The GitHub release is created ONLY if every smoke boot passes, so a build
+# that cannot start on a real Windows machine can never reach the releases
+# page again.
 
 on:
   workflow_dispatch:
@@ -7,6 +12,10 @@ on:
 
 permissions:
   contents: write
+
+env:
+  RELEASE_BODY: >-
+    Every Format. One Player. Open to All. — v0.15.8: TESTED ON REAL WINDOWS BEFORE IT SHIPS. Seven fix rounds were shipped blind and each one had to be tested by hand on your machine — that stops now. The release pipeline carries a mandatory smoke gate: after the build, CI launches OMP on a real Windows machine — a fresh first boot, then the exact rescue boot a broken machine takes (safe graphics), then a normal boot after a clean exit — and checks every launch for the boot handshake, a live window and the absence of any crash report, capturing desktop screenshots and boot logs as evidence. The installer below exists only because all three boots passed on that machine. The app itself is unchanged from v0.15.7: safe graphics through the process-wide engine override, hung-process cleanup, the 4-profile window ladder, never-silent Desktop reports and everything before. If it still misbehaves on your machine, the OMP-report.txt it leaves on your Desktop now records the exact engine flags of every launch — make sure the header says OMP v0.15.8, then send it over. Download the Windows installer below.
 
 jobs:
   build-windows:
@@ -110,17 +119,70 @@ jobs:
           if (-not (Test-Path src-tauri/resources/yt-dlp.exe)) { throw "yt-dlp.exe did not land in resources" }
           $ylen = (Get-Item src-tauri/resources/yt-dlp.exe).Length
           if ($ylen -lt 10MB) { throw "yt-dlp.exe suspiciously small ($ylen bytes)" }
-          Write-Host "yt-dlp: $([math]::Round($ylen/1MB,1)) MB"
           Write-Host "Staged resources:"
           Get-ChildItem -Recurse src-tauri/resources | Select-Object FullName, Length
 
-      - name: Build & release (NSIS installer + MSI)
+      - name: Build OMP (NSIS installer + MSI — build only, publish comes after smoke)
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "OMP ${{ github.ref_name }}"
-          releaseBody: "Every Format. One Player. Open to All. — v0.15.7: SAFE GRAPHICS, THE RIGHT WAY. The engine rule (v0.15.6) made window creation work again by giving every window identical engine flags — but it also left safety mode with no way to switch the interface renderer to software, so machines whose GPU compositor paints black stayed black even in maximum-compatibility mode, with the boot handshake passing and no report at all. v0.15.7 restores the software-rendering rescue through the one channel that cannot create an engine mismatch: a single process-wide override that Microsoft's own WebView2 loader applies identically to every window OMP ever creates — the splash, all four window profiles and the desktop widget. One rule, zero exceptions, error 0x8007139F still impossible in both modes. Second fix: a hung, invisible OMP.exe left behind by a crashed session kept the single-instance lock forever — every new launch was swallowed silently, with no window, no report and no log. OMP now detects a windowless leftover older than two minutes and clears it before the engine starts; a running OMP with a visible window is never touched. The boot log now also records the exact engine flags each launch runs with. Everything else stays: the window ladder with its remembered profile, never-silent dialogs, Desktop reports, the panic guard, pre-boot recovery and the embedded WebView2 installer. Download the Windows installer below."
-          releaseDraft: false
-          prerelease: false
+          # deliberately NO tagName here: tauri-action builds without publishing.
+          # The release is created by the `publish` job — and only if the
+          # smoke-windows job proves the exe actually boots on a real desktop.
+
+      - name: Upload build artifacts (for smoke test + publish)
+        uses: actions/upload-artifact@v4
+        with:
+          name: omp-build
+          path: |
+            src-tauri/target/release/OMP.exe
+            src-tauri/target/release/resources/**
+            src-tauri/target/release/bundle/nsis/*.exe
+            src-tauri/target/release/bundle/msi/*.msi
+          if-no-files-found: error
+
+  smoke-windows:
+    needs: build-windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: omp-build
+          path: smoke-stage
+
+      - name: Launch OMP on a real Windows desktop (fresh / rescue / normal)
+        shell: pwsh
+        run: .github/smoke/run-smoke.ps1 -StageDir smoke-stage
+
+      - name: Upload smoke evidence (screenshots + boot logs)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: omp-smoke-evidence
+          path: smoke-out/
+          if-no-files-found: error
+
+  publish:
+    needs: [build-windows, smoke-windows]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: omp-build
+          path: dist
+
+      - name: Create the GitHub release (only reached when smoke passed)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s\n' "${{ env.RELEASE_BODY }}" > body.md
+          gh release create "${{ github.ref_name }}" \
+            dist/bundle/nsis/*_x64-setup.exe \
+            dist/bundle/msi/*_x64_en-US.msi \
+            --title "OMP ${{ github.ref_name }}" \
+            --notes-file body.md
