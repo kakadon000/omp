@@ -33,31 +33,43 @@ distinctive, not into reinventing video decoding.
 - **The release pipeline is now smoke-gated.** Seven fix rounds shipped blind
   and every one of them had to be tested by hand on a broken machine — that
   ends here. CI now builds OMP, then **launches the real exe on a real
-  Windows machine three times** — a fresh first boot, the exact rescue boot
-  a broken machine takes, and a normal boot after a clean exit — and checks
-  every launch for the boot handshake, a live process, the absence of crash
-  reports **and actual visible content in the window** (PrintWindow capture
-  + pixel variance). Desktop screenshots and boot logs are kept as evidence.
-  The GitHub release is created only if every check passes: a build that
-  cannot start on Windows can never reach the releases page again.
-- **The smoke gate caught a real disease on day one — and v0.15.8 cures it.**
-  On the runner, a glass window whose webview was fully alive — frames
-  firing, handshake passing, no errors — still painted a flat gray surface:
-  the rAF paint watcher proves the *page* renders, never that the *window*
-  does. That is exactly the "ran but nothing, black" loop: nothing fails,
-  nothing escalates, no report. **Safe graphics mode now never builds glass
-  at all** — the window ladder is restricted to the opaque profiles, where
-  the visible surface is the software-rendered texture itself. Glass stays
-  a healthy-machine feature. A broken-compositor machine that lands in safe
-  mode now gets a window that physically cannot show a transparent void.
+  Windows machine four times** — a fresh first boot, the exact rescue boot
+  a broken machine takes, a normal boot after a clean exit, and a forced
+  opaque+GPU combination — and checks every launch for the boot handshake,
+  a live process, the absence of crash reports **and actual visible content
+  in the window** (PrintWindow capture + pixel variance, with Notepad and
+  Edge probes proving the harness and the machine can display content).
+  Screenshots and boot logs are kept as evidence. The GitHub release is
+  created only if every check passes: a build that cannot start on Windows
+  can never reach the releases page again.
+- **And the gate caught THE disease on day one — the one that ate seven
+  rounds.** On the runner, OMP's window was flat in every mode — page fully
+  alive (frames firing, handshake passing, zero errors) while nothing
+  reached the screen — on a machine where Edge rendered perfectly. Root
+  cause, verified in the tauri/wry sources: **WebView2's controller has its
+  own visibility flag, and it does not follow the window.** OMP creates its
+  windows hidden and shows them after the handshake (the v0.15.1 anti-blur
+  change — the very round this odyssey began), and showing the window only
+  showed the HWND: the controller stayed invisible forever, so WebView2
+  never presented a single frame. The interface literally ran inside an
+  invisible webview behind a colored rectangle. **v0.15.8 adds the
+  controller rule: every show now shows both halves — the window and the
+  webview controller — everywhere** (handshake show, failsafe show, widget
+  restore, second-launch show, splash).
+- **Defense in depth for broken machines: safe graphics never builds
+  glass.** Safe mode now uses only the opaque window profiles, where what
+  you see is the software-rendered interface itself over a solid surface —
+  a machine rescued into safe mode physically cannot show a transparent
+  void even if its compositor is sick. Glass stays a healthy-machine
+  feature.
 - **Reports name the WebView2 runtime correctly on Edge-less machines** —
   the version lookup falls back to the runtime's own Evergreen registry key
   (the smoke runner had the runtime installed with Edge absent, and reports
   used to claim "not found in registry").
-- Everything else stays: the engine rule with identical flags for every
-  window, the window ladder with its remembered profile, hung-process
-  cleanup, never-silent dialogs, Desktop reports, the panic guard, pre-boot
-  recovery and the embedded WebView2 installer.
+- Everything else stays: identical engine flags for every window, the
+  window ladder with its remembered profile, hung-process cleanup,
+  never-silent dialogs, Desktop reports, the panic guard, pre-boot recovery
+  and the embedded WebView2 installer.
 
 ## What's new in v0.15.7 — safe graphics, the right way
 

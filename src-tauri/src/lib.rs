@@ -167,13 +167,38 @@ pub(crate) static SAFE_VIDEO: AtomicBool = AtomicBool::new(false);
 /// engine, and surfaces a recovery banner with a one-tap crash report.
 pub(crate) static CRASHED_LAST: AtomicBool = AtomicBool::new(false);
 
+/// v0.15.8 — THE CONTROLLER RULE. On Windows, WebView2 composites through
+/// the controller's IsVisible flag and that flag does NOT follow the HWND:
+/// wry creates the controller invisible together with the hidden window
+/// (`controller.SetIsVisible(false)`), and showing the window afterwards
+/// never reaches the controller — tauri 2.12.4's `WebviewWindow::show()`
+/// forwards to WindowMessage::Show (HWND only), and wry's parent subclass
+/// handles WM_SIZE/WM_MOVE/focus but has NO WM_SHOWWINDOW branch. The page
+/// kept running perfectly — JS, rAF, the whole handshake — while WebView2
+/// never presented a single frame: the flat gray/black "ran but nothing"
+/// window. The CI smoke gate reproduced it in every mode on a machine where
+/// Edge renders fine, which is what cracked the case. Every show of a
+/// window created hidden must therefore show BOTH halves: the HWND and
+/// the webview controller.
+fn show_webview_window(app: &AppHandle, label: &str) -> bool {
+    if let Some(w) = app.get_webview_window(label) {
+        let _ = w.show();
+        if let Some(wv) = app.get_webview(label) {
+            let _ = wv.show();
+        }
+        true
+    } else {
+        false
+    }
+}
+
 /// v0.15.1 — the ONE place that surfaces the main window during boot.
 /// Idempotent and polite: focus is only taken on the FIRST show, retries
 /// never yank the window back in front of the user.
 fn show_main(app: &AppHandle) {
     if let Some(m) = app.get_webview_window("main") {
         let first = !BOOT_SHOWN.load(Ordering::Relaxed);
-        let _ = m.show();
+        let _ = show_webview_window(app, "main");
         if first {
             let _ = m.set_focus();
         }
@@ -324,7 +349,10 @@ fn build_widget(app: &tauri::AppHandle) -> bool {
             let _ = w.hide();
             return false;
         }
-        let _ = w.show();
+        // controller rule here too — the widget was created visible so its
+        // controller is alive, but showing BOTH halves keeps the whole class
+        // of "HWND visible, webview invisible" impossible everywhere
+        let _ = show_webview_window(app, "widget");
         let _ = w.set_focus();
         return true;
     }
@@ -417,7 +445,7 @@ fn widget_set_pos(app: tauri::AppHandle, x: f64, y: f64) -> bool {
 #[tauri::command]
 fn app_show_main(app: tauri::AppHandle) -> bool {
     if let Some(w) = app.get_webview_window("main") {
-        let _ = w.show();
+        let _ = show_webview_window(&app, "main");
         let _ = w.unminimize();
         let _ = w.set_focus();
         return true;
@@ -981,7 +1009,7 @@ pub fn run() {
             }
             // a second launch means the user wants OMP on screen
             if let Some(w) = app.get_webview_window("main") {
-                let _ = w.show();
+                let _ = show_webview_window(app, "main");
                 let _ = w.unminimize();
                 let _ = w.set_focus();
             }
@@ -1331,8 +1359,10 @@ pub fn run() {
             // EVERY launch after shows nothing until ui_ready lands: the
             // window then appears with real content already painted.
             if !booted_once {
-                if let Some(s) = app.get_webview_window("splashscreen") {
-                    let _ = s.show();
+                if app.get_webview_window("splashscreen").is_some() {
+                    // the controller rule applies to the splash too: it is
+                    // created hidden by the config and must show both halves
+                    let _ = show_webview_window(app.app_handle(), "splashscreen");
                 }
             }
             // FAILSAFE — the boot can never trap the app or show an empty
