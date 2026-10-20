@@ -36,6 +36,8 @@ sevenz-rust = "0.6"
 # The RECT type lives here; version pinned to wry 0.57's own to reuse the tree.
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.39"
+# RECT lives in the windows crate (same source wry 0.57 binds against)
+windows = { version = "0.62", features = ["Win32_Foundation"] }
 
 [profile.release]
 strip = true

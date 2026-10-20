@@ -200,7 +200,7 @@ fn reassert_webview_composition(w: &tauri::WebviewWindow) {
     let Ok(size) = w.inner_size() else { return };
     let _ = w.with_webview(move |plat| {
         let controller = plat.controller();
-        let rect = webview2_com::Microsoft::Web::WebView2::Win32::RECT {
+        let rect = windows::Win32::Foundation::RECT {
             left: 0,
             top: 0,
             right: size.width as i32,
