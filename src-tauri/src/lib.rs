@@ -1234,17 +1234,37 @@ pub fn run() {
                 .and_then(|d| std::fs::read_to_string(d.join("ui.winrung")).ok())
                 .and_then(|s| s.trim().parse().ok())
                 .filter(|n| (1..=4).contains(n));
+            // v0.15.8 — THE OPAQUE SAFE RULE. Safe graphics exists for machines
+            // whose compositor cannot be trusted — and the new CI smoke gate
+            // PROVED the remaining trap on a real Windows machine: a glass
+            // window (rung 1) whose webview is fully alive — rAF frames fire,
+            // the handshake lands, ui.ok is written — while the DWM backdrop
+            // behind the transparent surface shows a flat gray/black fill
+            // forever. Nothing fails, nothing escalates, no report: the user
+            // sees "ran but nothing, black" on every launch. The lesson: rAF
+            // proves the PAGE renders, never that the WINDOW does. So safe
+            // mode never builds glass at all — the ladder is restricted to
+            // the opaque rungs (3: opaque frameless, 4: native decorations),
+            // where the visible surface is the webview's own software-rendered
+            // texture over a solid background. Glass stays a healthy-machine
+            // feature; a sticky rung < 3 is ignored under safe mode and the
+            // opaque rung re-wins (and is re-saved) this boot.
+            let safe_gfx = SAFE_MODE.load(Ordering::Relaxed);
             let mut rungs: Vec<u8> = match saved_rung {
-                Some(r) => {
+                Some(r) if !(safe_gfx && r < 3) => {
                     bootlog::log(&apph, "boot", &format!("sticky window profile: rung {r} (ui.winrung)"));
                     vec![r]
                 }
-                None => vec![1, 2, 3, 4],
+                _ => vec![1, 2, 3, 4],
             };
             // the sticky profile is tried first; if IT fails this time, fall
             // through the whole ladder before giving up
             if saved_rung.is_some() {
                 rungs.extend((1u8..=4).filter(|r| Some(*r) != saved_rung));
+            }
+            if safe_gfx {
+                rungs.retain(|r| *r >= 3);
+                bootlog::log(&apph, "boot", "safe graphics — window ladder restricted to the opaque rungs (3, 4); glass is a healthy-machine feature");
             }
             let mut win_rung: Option<u8> = None;
             let mut rung_errors: Vec<String> = Vec::new();

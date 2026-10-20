@@ -1,6 +1,6 @@
 [package]
 name = "omp"
-version = "0.15.7"
+version = "0.15.8"
 edition = "2021"
 description = "OMP — Open Media Player. Every Format. One Player. Open to All."
 license = "GPL-3.0-or-later"

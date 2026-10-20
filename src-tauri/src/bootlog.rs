@@ -79,14 +79,31 @@ pub fn states_line(app: &AppHandle) -> String {
 /// (BLBeacon registry key). Strings like "141.0.3537.92" tell us instantly
 /// whether a broken Evergreen update is the culprit.
 /// (v0.15.4: shared with bootguard's pre-boot reports)
+/// v0.15.8: BLBeacon is EDGE's beacon — a machine can carry the WebView2
+/// runtime WITHOUT Edge (the CI smoke runner proved it: runtime 154.0.4258.62
+/// installed, BLBeacon absent, the report claimed "not found in registry").
+/// The runtime's own Evergreen key is the authoritative fallback.
 #[cfg(windows)]
 pub(crate) fn webview2_version() -> String {
-    for key in [
-        r"HKCU\Software\Microsoft\Edge\BLBeacon",
-        r"HKLM\Software\Microsoft\Edge\BLBeacon",
+    for (key, val) in [
+        (r"HKCU\Software\Microsoft\Edge\BLBeacon", "version"),
+        (r"HKLM\Software\Microsoft\Edge\BLBeacon", "version"),
+        // the WebView2 Runtime's own Evergreen key (pv value), all hives
+        (
+            r"HKLM\SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+            "pv",
+        ),
+        (
+            r"HKLM\SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+            "pv",
+        ),
+        (
+            r"HKCU\Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}",
+            "pv",
+        ),
     ] {
         if let Ok(out) = std::process::Command::new("reg")
-            .args(["query", key, "/v", "version"])
+            .args(["query", key, "/v", val])
             .output()
         {
             let s = String::from_utf8_lossy(&out.stdout);

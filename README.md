@@ -28,6 +28,37 @@ distinctive, not into reinventing video decoding.
   you pick**, ten one-tap presets, themes that travel as `.omptheme` files,
   adjustable transparency, Reduced Effects for low-end PCs.
 
+## What's new in v0.15.8 — tested on real Windows before it ships
+
+- **The release pipeline is now smoke-gated.** Seven fix rounds shipped blind
+  and every one of them had to be tested by hand on a broken machine — that
+  ends here. CI now builds OMP, then **launches the real exe on a real
+  Windows machine three times** — a fresh first boot, the exact rescue boot
+  a broken machine takes, and a normal boot after a clean exit — and checks
+  every launch for the boot handshake, a live process, the absence of crash
+  reports **and actual visible content in the window** (PrintWindow capture
+  + pixel variance). Desktop screenshots and boot logs are kept as evidence.
+  The GitHub release is created only if every check passes: a build that
+  cannot start on Windows can never reach the releases page again.
+- **The smoke gate caught a real disease on day one — and v0.15.8 cures it.**
+  On the runner, a glass window whose webview was fully alive — frames
+  firing, handshake passing, no errors — still painted a flat gray surface:
+  the rAF paint watcher proves the *page* renders, never that the *window*
+  does. That is exactly the "ran but nothing, black" loop: nothing fails,
+  nothing escalates, no report. **Safe graphics mode now never builds glass
+  at all** — the window ladder is restricted to the opaque profiles, where
+  the visible surface is the software-rendered texture itself. Glass stays
+  a healthy-machine feature. A broken-compositor machine that lands in safe
+  mode now gets a window that physically cannot show a transparent void.
+- **Reports name the WebView2 runtime correctly on Edge-less machines** —
+  the version lookup falls back to the runtime's own Evergreen registry key
+  (the smoke runner had the runtime installed with Edge absent, and reports
+  used to claim "not found in registry").
+- Everything else stays: the engine rule with identical flags for every
+  window, the window ladder with its remembered profile, hung-process
+  cleanup, never-silent dialogs, Desktop reports, the panic guard, pre-boot
+  recovery and the embedded WebView2 installer.
+
 ## What's new in v0.15.7 — safe graphics, the right way
 
 - **The engine rule gets its second half.** v0.15.6 fixed window creation by
