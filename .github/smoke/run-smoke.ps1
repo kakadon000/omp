@@ -516,6 +516,55 @@ Write-Host "OMP_EXTRA_WEBVIEW_ARGS=$env:OMP_EXTRA_WEBVIEW_ARGS (safe mode active
 $null = Invoke-Launch -tag "l6-nodcomp-safe" -waitSec 25 -GateOn $false
 Remove-Item Env:OMP_EXTRA_WEBVIEW_ARGS -ErrorAction SilentlyContinue
 
+# ---------- L7/L8/L9: the software-GL matrix --------------------------
+# --disable-direct-composition changed nothing: the dead layer is below
+# flag level. Next candidates attack the GPU process's presentation path
+# itself. --use-angle=swiftshader keeps the GPU process (and its D3D11
+# WARP presentation, the same path that fixed mpv on broken machines)
+# alive while making ALL GL work software. --disable-gpu-compositing
+# moves compositing fully to software.
+Write-Step "L7: opaque + GPU process alive via WARP, all GL software (swiftshader)"
+Stop-AllOmp
+foreach ($root in @($env:APPDATA, $env:LOCALAPPDATA)) {
+    $ad = Join-Path $root "app.omp.player"
+    if (Test-Path $ad) {
+        Remove-Item -Force (Join-Path $ad "ui.safe") -ErrorAction SilentlyContinue
+        Remove-Item -Force (Join-Path $ad "ui.failsafe") -ErrorAction SilentlyContinue
+        Remove-Item -Force (Join-Path $ad "session.dirty") -ErrorAction SilentlyContinue
+        Set-Content -Path (Join-Path $ad "ui.winrung") -Value "3" -NoNewline
+    }
+}
+$env:OMP_EXTRA_WEBVIEW_ARGS = "--use-angle=swiftshader"
+Write-Host "OMP_EXTRA_WEBVIEW_ARGS=$env:OMP_EXTRA_WEBVIEW_ARGS"
+$null = Invoke-Launch -tag "l7-swiftshader" -waitSec 25 -GateOn $false
+Remove-Item Env:OMP_EXTRA_WEBVIEW_ARGS -ErrorAction SilentlyContinue
+
+Write-Step "L8: safe mode + swiftshader (software everything, rescue candidate)"
+Stop-AllOmp
+$dd = Join-Path $env:APPDATA "app.omp.player"
+Set-Content -Path (Join-Path $dd "ui.failsafe") -Value "1" -NoNewline
+Set-Content -Path (Join-Path $dd "session.dirty") -Value "1" -NoNewline
+$env:OMP_EXTRA_WEBVIEW_ARGS = "--use-angle=swiftshader"
+Write-Host "OMP_EXTRA_WEBVIEW_ARGS=$env:OMP_EXTRA_WEBVIEW_ARGS (safe mode active)"
+$null = Invoke-Launch -tag "l8-swiftshader-safe" -waitSec 25 -GateOn $false
+Remove-Item Env:OMP_EXTRA_WEBVIEW_ARGS -ErrorAction SilentlyContinue
+
+Write-Step "L9: opaque + GPU + software compositing"
+Stop-AllOmp
+foreach ($root in @($env:APPDATA, $env:LOCALAPPDATA)) {
+    $ad = Join-Path $root "app.omp.player"
+    if (Test-Path $ad) {
+        Remove-Item -Force (Join-Path $ad "ui.safe") -ErrorAction SilentlyContinue
+        Remove-Item -Force (Join-Path $ad "ui.failsafe") -ErrorAction SilentlyContinue
+        Remove-Item -Force (Join-Path $ad "session.dirty") -ErrorAction SilentlyContinue
+        Set-Content -Path (Join-Path $ad "ui.winrung") -Value "3" -NoNewline
+    }
+}
+$env:OMP_EXTRA_WEBVIEW_ARGS = "--disable-gpu-compositing"
+Write-Host "OMP_EXTRA_WEBVIEW_ARGS=$env:OMP_EXTRA_WEBVIEW_ARGS"
+$null = Invoke-Launch -tag "l9-swcompositing" -waitSec 25 -GateOn $false
+Remove-Item Env:OMP_EXTRA_WEBVIEW_ARGS -ErrorAction SilentlyContinue
+
 # ---------------------------------------------------------------------
 Write-Step "cleanup"
 Stop-AllOmp
