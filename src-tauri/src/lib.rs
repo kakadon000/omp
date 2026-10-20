@@ -183,9 +183,9 @@ pub(crate) static CRASHED_LAST: AtomicBool = AtomicBool::new(false);
 fn show_webview_window(app: &AppHandle, label: &str) -> bool {
     if let Some(w) = app.get_webview_window(label) {
         let _ = w.show();
-        if let Some(wv) = app.get_webview(label) {
-            let _ = wv.show();
-        }
+        // the webview half, via the stable AsRef<Webview> accessor —
+        // Manager::get_webview exists only under the `unstable` feature
+        let _ = w.as_ref().show();
         true
     } else {
         false
