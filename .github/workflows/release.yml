@@ -210,8 +210,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           printf '%s\n' "${{ env.RELEASE_BODY }}" > body.md
+          # --repo: this job has no checkout — without it gh shells out to
+          # git to discover the repository and dies ("not a git repository")
           gh release create "${{ github.ref_name }}" \
             dist/bundle/nsis/*_x64-setup.exe \
             dist/bundle/msi/*_x64_en-US.msi \
+            --repo "${{ github.repository }}" \
             --title "OMP ${{ github.ref_name }}" \
             --notes-file body.md
