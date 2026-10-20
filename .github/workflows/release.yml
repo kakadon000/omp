@@ -88,9 +88,38 @@ jobs:
           Copy-Item $dll.FullName src-tauri/resources/mpv-2.dll
           Write-Host "Engine dll: $($dll.Name) ($([math]::Round($dll.Length/1MB,1)) MB)"
           # 3) bundle ffmpeg for the Phase 4 editor export pipeline
-          # (BtbN stable n8.1 GPL build — libx264 / libvpx-vp9 / libopus all in;
-          #  the old "release-latest" asset name was retired upstream → 404)
-          $ffurl = "https://github.com/BtbN/FFmpeg-Builds/releases/latest/download/ffmpeg-n8.1-latest-win64-gpl-8.1.zip"
+          # (BtbN GPL build — libx264 / libvpx-vp9 / libopus all in.
+          #  BtbN retires asset names over time (the old "release-latest"
+          #  name 404'd in v0.9.1, the n8.1 name 404'd in v0.15.8) —
+          #  resolve the CURRENT stable asset from the release's asset
+          #  list instead of hardcoding a filename.)
+          $ffheaders = @{
+            "User-Agent"    = "omp-ci-build"
+            "Accept"        = "application/vnd.github+json"
+            "Authorization" = "Bearer $env:GITHUB_TOKEN"
+          }
+          $ffrel = $null
+          for ($i = 1; $i -le 5; $i++) {
+            try {
+              $ffrel = Invoke-RestMethod -Uri "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest" -Headers $ffheaders
+              break
+            } catch {
+              Write-Host "BtbN API attempt $i failed: $($_.Exception.Message)"
+              $ffheaders.Remove("Authorization") | Out-Null
+              if ($i -eq 5) { throw }
+              Start-Sleep -Seconds (20 * $i)
+            }
+          }
+          $ffasset = $ffrel.assets |
+            Where-Object { $_.name -like "ffmpeg-n*-latest-win64-gpl-*.zip" -and $_.name -notlike "*shared*" } |
+            Select-Object -First 1
+          if (-not $ffasset) {
+            $ffasset = $ffrel.assets |
+              Where-Object { $_.name -like "ffmpeg-*latest-win64-gpl-*.zip" -and $_.name -notlike "*shared*" -and $_.name -notlike "*master*" } |
+              Select-Object -First 1
+          }
+          if (-not $ffasset) { throw "no win64-gpl ffmpeg asset found in BtbN latest release" }
+          Write-Host "FFmpeg asset: $($ffasset.name)"
           # curl.exe (bundled with the runner) — IWR can silently land an HTML
           # error page on release-asset redirects; curl --fail cannot, and a
           # size guard + visible 7z log make any failure diagnosable
@@ -98,7 +127,8 @@ jobs:
           # and quarantines the exe right after extraction (7z still reports
           # Ok, the file just vanishes) — exclude the workspace first.
           try { Add-MpPreference -ExclusionPath (Get-Location).Path -ErrorAction Stop } catch { Write-Host "Defender exclusion failed: $($_.Exception.Message)" }
-          curl.exe -sSL --fail --retry 5 --retry-delay 5 -A omp-ci-build -o ffmpeg-bn.zip $ffurl
+          # NO auth header here: the download redirects to the release CDN
+          curl.exe -sSL --fail --retry 5 --retry-delay 5 -A omp-ci-build -o ffmpeg-bn.zip $ffasset.browser_download_url
           $zsize = (Get-Item ffmpeg-bn.zip).Length
           Write-Host "ffmpeg zip: $([math]::Round($zsize/1MB,1)) MB"
           if ($zsize -lt 104857600) { throw "ffmpeg zip too small ($zsize bytes) — download did not yield the archive" }
