@@ -166,7 +166,7 @@ function Dump-WindowTree([System.Diagnostics.Process]$proc, [string]$tag) {
     # which name the EFFECTIVE engine flags of this exact launch.
     try {
         $rows = New-Object 'System.Collections.Generic.List[object]'
-        $cb = [WU32+EnumProc]{ param($h, $l)
+        $cb = [EnumProc]{ param($h, $l)
             $wpid = [uint32]0
             [void][WU32]::GetWindowThreadProcessId($h, [ref]$wpid)
             if ($wpid -eq $script:ompPid) {
@@ -186,7 +186,7 @@ function Dump-WindowTree([System.Diagnostics.Process]$proc, [string]$tag) {
         foreach ($t in $rows) {
             Write-Host ("  top: hwnd={0} class='{1}' visible={2} rect={3}x{4} at {5},{6}" -f $t.hwnd, $t.cls, $t.vis, $t.w, $t.hgt, $t.l, $t.t)
             $kids = New-Object 'System.Collections.Generic.List[object]'
-            $cb2 = [WU32+EnumProc]{ param($h, $l)
+            $cb2 = [EnumProc]{ param($h, $l)
                 $sb = New-Object System.Text.StringBuilder 256
                 [void][WU32]::GetClassName($h, $sb, 256)
                 $r = New-Object WRECT
