@@ -180,12 +180,47 @@ pub(crate) static CRASHED_LAST: AtomicBool = AtomicBool::new(false);
 /// Edge renders fine, which is what cracked the case. Every show of a
 /// window created hidden must therefore show BOTH halves: the HWND and
 /// the webview controller.
+/// v0.15.8 — THE COMPOSITION RE-ASSERT. The smoke gate's window-tree dump
+/// proved the trap precisely: after a show, the ENTIRE WebView2 hwnd chain
+/// (WRY_WEBVIEW → Chrome_WidgetWin_0/1 → Chrome_RenderWidgetHostHWND →
+/// "Intermediate D3D Window") exists, is visible and correctly sized, the
+/// browser/renderer/gpu processes all run, the JS handshake fires — and the
+/// DirectComposition surface still presents nothing, in every window mode,
+/// on a machine where Edge itself renders fine. Root cause: wry computes
+/// the controller's bounds ONLY from WM_SIZE (no SetBounds at creation, no
+/// WM_SHOWWINDOW handling) — and a window created HIDDEN and later shown at
+/// the same size never delivers the WM_SIZE that would land the bounds on
+/// the controller. wry sets IsVisible=false at creation and tauri's
+/// WebviewWindow::show() never reaches the controller either. So after
+/// every show, both are re-asserted by hand through the stable platform
+/// handle: SetIsVisible(true) + SetBounds(client rect). This is the
+/// controller rule made physical.
+#[cfg(windows)]
+fn reassert_webview_composition(w: &tauri::WebviewWindow) {
+    let Ok(size) = w.inner_size() else { return };
+    let _ = w.with_webview(move |plat| {
+        let controller = plat.controller();
+        let rect = webview2_com::Microsoft::Web::WebView2::Win32::RECT {
+            left: 0,
+            top: 0,
+            right: size.width as i32,
+            bottom: size.height as i32,
+        };
+        unsafe {
+            let _ = controller.SetIsVisible(true);
+            let _ = controller.SetBounds(rect);
+        }
+    });
+}
+
 fn show_webview_window(app: &AppHandle, label: &str) -> bool {
     if let Some(w) = app.get_webview_window(label) {
         let _ = w.show();
         // the webview half, via the stable AsRef<Webview> accessor —
         // Manager::get_webview exists only under the `unstable` feature
         let _ = w.as_ref().show();
+        #[cfg(windows)]
+        reassert_webview_composition(&w);
         true
     } else {
         false

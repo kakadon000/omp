@@ -30,6 +30,12 @@ walkdir = "2"
 # DLL from the official mpv-dev archive, and both need no system tooling.
 ureq = { version = "2", features = ["json"] }
 sevenz-rust = "0.6"
+# v0.15.8 — the controller rule: after every show of a hidden-created
+# window, the WebView2 controller's visibility AND bounds are re-asserted
+# through the platform handle (tauri with_webview → PlatformWebview::controller).
+# The RECT type lives here; version pinned to wry 0.57's own to reuse the tree.
+[target.'cfg(windows)'.dependencies]
+webview2-com = "0.39"
 
 [profile.release]
 strip = true
