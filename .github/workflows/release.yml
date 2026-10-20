@@ -126,10 +126,9 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          # deliberately NO tagName here: tauri-action builds without publishing.
-          # The release is created by the `publish` job — and only if the
-          # smoke-windows job proves the exe actually boots on a real desktop.
+        # deliberately NO tagName: tauri-action builds without publishing.
+        # The release is created by the `publish` job — and only if the
+        # smoke-windows job proves the exe actually boots on a real desktop.
 
       - name: Upload build artifacts (for smoke test + publish)
         uses: actions/upload-artifact@v4
