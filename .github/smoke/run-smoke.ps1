@@ -27,6 +27,14 @@ param([string]$StageDir = "smoke-stage")
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
+# v0.15.9 - the app now self-pixel-probes its own window and auto-escalates
+# (safe opaque -> SwiftShader -> terminal dialog) on flat presentations. The
+# runner's WebView2 presents NOTHING under every configuration (measured, nine
+# configurations) - the in-app ladder would relaunch mid-gate and pop dialogs
+# nobody can click. The gate pixel-probes from OUTSIDE and owns the verdicts;
+# every launch here runs the app with the ladder disabled for determinism.
+$env:OMP_SELFPIC = "0"
+
 if (-not ("WU32" -as [type])) {
     Add-Type -TypeDefinition @"
 using System;

@@ -55,7 +55,7 @@ pub fn states_line(app: &AppHandle) -> String {
     };
     let chk = |n: &str| if d.join(n).is_file() { "yes" } else { "no" };
     format!(
-        "ui.ok={} ui.failsafe={} ui.safe={} session.dirty={} ui.fscount={} webview.dirty={} safe_mode={} safe_sticky={} safe_video={} crashed_last={}",
+        "ui.ok={} ui.failsafe={} ui.safe={} session.dirty={} ui.fscount={} webview.dirty={} pix.flat={} pix.swift={} safe_mode={} safe_sticky={} safe_video={} crashed_last={} swift_forced={}",
         chk("ui.ok"),
         chk("ui.failsafe"),
         chk("ui.safe"),
@@ -68,10 +68,16 @@ pub fn states_line(app: &AppHandle) -> String {
             .ok()
             .and_then(|s| s.trim().parse::<u32>().ok())
             .unwrap_or(0),
+        fs::read_to_string(d.join("pix.flat"))
+            .ok()
+            .and_then(|s| s.trim().parse::<u32>().ok())
+            .unwrap_or(0),
+        chk("pix.swift"),
         crate::SAFE_MODE.load(std::sync::atomic::Ordering::Relaxed),
         crate::SAFE_STICKY.load(std::sync::atomic::Ordering::Relaxed),
         crate::SAFE_VIDEO.load(std::sync::atomic::Ordering::Relaxed),
         crate::CRASHED_LAST.load(std::sync::atomic::Ordering::Relaxed),
+        crate::selfpix::SWIFT_FORCED.load(std::sync::atomic::Ordering::Relaxed),
     )
 }
 

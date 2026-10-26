@@ -73,6 +73,7 @@ mod health;
 mod downloader;
 mod bootlog;
 mod bootguard;
+mod selfpix;
 
 /// Detect the Windows build number from the OS plugin (e.g. "10.0.22631").
 #[cfg(windows)]
@@ -129,7 +130,23 @@ pub(crate) fn set_playback_effects(_app: &AppHandle, _playing: bool) {}
 /// v0.15.1 — set once the main window has actually been shown this launch
 /// (via ui_ready / close_splash / a user-driven show). The boot failsafe
 /// only rescues launches where this never happened.
-static BOOT_SHOWN: AtomicBool = AtomicBool::new(false);
+/// v0.15.9 — also the self-pixel-probe's start signal: once the window is
+/// shown and the handshake has landed, the app captures its own window with
+/// PrintWindow(PW_RENDERFULLCONTENT) — the exact API and thresholds the
+/// v0.15.8 smoke gate measured across nine launch configurations — and
+/// classifies: HEALTHY (real pixels) vs. FLAT (constant fill = the
+/// presentation layer presents nothing while the webview swears it renders).
+/// Flat boots climb a one-step-per-launch rescue ladder and relaunch
+/// themselves; see selfpix.rs. Kept crate-visible for that module.
+pub(crate) static BOOT_SHOWN: AtomicBool = AtomicBool::new(false);
+
+/// v0.15.9 — the webview PROVED ITSELF this launch (ui_ready / close_splash
+/// landed). The self-pixel-probe waits on THIS, never on BOOT_SHOWN alone:
+/// the 8s failsafe force-shows never-proved windows too, and probing a dead
+/// webview as if the UI were alive would double-report a failure the
+/// failsafe already graded. Only a living UI's blank window is the
+/// presentation disease the probe exists for.
+pub(crate) static HANDSHAKE_OK: AtomicBool = AtomicBool::new(false);
 
 /// v0.15.1 — safe graphics mode. Some machines (broken GPU drivers, broken
 /// WebView2 updates) never paint a first webview frame: the window shows the
@@ -247,6 +264,8 @@ fn close_splash(app: tauri::AppHandle) {
         let _ = splash.close();
     }
     show_main(&app);
+    // the UI answered — the self-pixel-probe may judge the window
+    HANDSHAKE_OK.store(true, Ordering::Relaxed);
     // v0.15.0 — the UI answered: from now on every launch skips the splash.
     if let Ok(d) = app.path().app_data_dir() {
         let _ = std::fs::write(d.join("ui.ok"), b"ok");
@@ -261,6 +280,8 @@ fn close_splash(app: tauri::AppHandle) {
 #[tauri::command]
 fn ui_ready(app: tauri::AppHandle) -> serde_json::Value {
     show_main(&app);
+    // the UI proved itself — the self-pixel-probe may judge the window
+    HANDSHAKE_OK.store(true, Ordering::Relaxed);
     let safe = SAFE_MODE.load(Ordering::Relaxed);
     // v0.15.3 — the interface is ALIVE: the consecutive-failsafe streak ends
     if let Ok(d) = app.path().app_data_dir() {
@@ -296,7 +317,11 @@ fn ui_ready(app: tauri::AppHandle) -> serde_json::Value {
 #[tauri::command]
 fn ui_paint_ok(app: AppHandle) {
     // frames confirmed on this launch's graphics path — clear any doubt
-    bootlog::log(&app, "paint", "frames confirmed reaching the screen");
+    // v0.15.9 — HONEST WORDING: rAF proves the PAGE compositor produces
+    // frames, never that the window presents them (the flat-glass disease
+    // ran green through this check for its whole life). The window itself
+    // is judged by the self-pixel-probe, which sees what rAF cannot.
+    bootlog::log(&app, "paint", "page rAF frames flowing (page compositor alive — the window presents or the self-pixel-probe escalates)");
     if !SAFE_MODE.load(Ordering::Relaxed) {
         if let Ok(d) = app.path().app_data_dir() {
             let _ = std::fs::remove_file(d.join("ui.failsafe"));
@@ -978,6 +1003,23 @@ fn decide_boot_modes() {
         let rescued = has("ui.failsafe");
         let safe_sticky = has("ui.safe");
         let crashed_last = has("session.dirty");
+        // v0.15.9 — the SELF-PIXEL-PROBE's presentation ladder. pix.flat
+        // counts consecutive launches whose window presented a constant
+        // fill (the webview alive, the screen blank — the disease rAF can
+        // never see); pix.swift is the earned SwiftShader lock-in. Two flat
+        // launches (or the marker) force full-software ANGLE rendering into
+        // the engine flags for every window, in both modes.
+        let pix_flat: u32 = markers
+            .as_ref()
+            .map(|d| {
+                std::fs::read_to_string(d.join("pix.flat"))
+                    .ok()
+                    .and_then(|s| s.trim().parse().ok())
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0);
+        let swift = has("pix.swift") || pix_flat >= 2;
+        selfpix::SWIFT_FORCED.store(swift, Ordering::Relaxed);
 
         // identical formula to the one setup() used through v0.15.6 —
         // safe graphics when: the last launch needed the failsafe, OR a
@@ -1017,6 +1059,12 @@ fn decide_boot_modes() {
         } else {
             base.to_string()
         };
+        // v0.15.9 — the presentation ladder's strongest cure rides INSIDE the
+        // engine variable, identically for every window, exactly like the
+        // escape hatch it automatizes
+        if swift {
+            flags.push_str(" --use-angle=swiftshader");
+        }
         if !extra.is_empty() {
             flags.push(' ');
             flags.push_str(&extra);
@@ -1458,6 +1506,19 @@ pub fn run() {
                     }
                 });
             }
+            // v0.15.9 — THE SELF-PIXEL-PROBE. The failsafe above covers a
+            // webview that never proves itself; the rAF paint watch covers a
+            // page compositor that never produces a frame. NEITHER can see
+            // the disease this field saga actually ends on: a webview that
+            // renders perfectly while the window's DirectComposition surface
+            // presents NOTHING — "ran but nothing, glassy/blank" forever,
+            // handshake green, zero reports, zero escalation. The probe
+            // captures the window itself (PrintWindow + pixel statistics,
+            // the method the v0.15.8 smoke gate validated across nine
+            // configurations) and, if it is flat, climbs the rescue ladder
+            // one step per launch: safe opaque → SwiftShader → terminal
+            // report + dialog. Healthy machines pay one invisible probe.
+            selfpix::spawn_watchdog(app.handle().clone(), win_rung, safe_gfx);
             // "Open with OMP" / default-player launch: collect media paths
             // from OUR command line before the UI mounts; the UI drains them
             // via pending_open_paths once its listeners are up.

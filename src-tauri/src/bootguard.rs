@@ -318,7 +318,28 @@ fn browser_profile_dir() -> Option<PathBuf> {
 }
 
 #[cfg(windows)]
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// v0.15.9 — public wrappers over the private win module for selfpix.rs:
+/// a native dialog (the surface Windows always guarantees, even with a dead
+/// presentation) and the official repair page.
+#[cfg(windows)]
+pub fn dialog_ok(title: &str, msg: &str) -> bool {
+    win::warn_box(title, msg)
+}
+
+#[cfg(windows)]
+pub fn open_repair_page() {
+    win::open_in_browser(WEBVIEW2_URL);
+}
+
+#[cfg(not(windows))]
+pub fn dialog_ok(_title: &str, _msg: &str) -> bool {
+    false
+}
+
+#[cfg(not(windows))]
+pub fn open_repair_page() {}
 
 /// One PowerShell pass over the OMP.exe process list that answers BOTH
 /// questions v0.15.7 needs before the Tauri builder exists:

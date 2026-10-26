@@ -28,6 +28,49 @@ distinctive, not into reinventing video decoding.
   you pick**, ten one-tap presets, themes that travel as `.omptheme` files,
   adjustable transparency, Reduced Effects for low-end PCs.
 
+## What's new in v0.15.9 — the app judges its own window
+
+- **THE SELF-PIXEL-PROBE.** Fourteen releases of blank/glassy screens ended
+  by making OMP its own witness. The disease was invisible from inside the
+  app: the webview rendered the page perfectly (JS alive, rAF frames
+  flowing, handshake green, the paint check even logged "frames confirmed
+  reaching the screen") while the window's DirectComposition surface
+  presented NOTHING — a flat, empty rectangle. rAF proves the page renders,
+  never that the window does; only a pixel probe of the window itself can
+  see the difference, which is exactly what the v0.15.8 smoke gate measured
+  across nine launch configurations. That probe now lives in the app: a few
+  seconds after the window appears, OMP captures its own surface
+  (PrintWindow + PW_RENDERFULLCONTENT, the gate's exact method) and
+  measures luminance std and distinct colors — real UI content reads
+  wildly above the flat-fill thresholds the gate validated.
+- **The presentation ladder — the app fixes itself.** A flat capture is
+  confirmed with a second sample two seconds later, then the boot relaunches
+  itself one rung at a time: normal glass → safe mode with an opaque window
+  and `--disable-gpu` → safe mode + `--use-angle=swiftshader` (full-software
+  ANGLE). Markers (`pix.flat`, `pix.swift`) carry the ladder across boots,
+  a working mode is remembered, the cure that worked is kept, and every
+  step is logged with the exact pixel statistics. A healthy machine pays
+  one invisible probe and never notices any of this.
+- **Terminal state is loud, never looping.** If every graphics mode OMP owns
+  still presents nothing, the app stops escalating and says so: a native
+  Windows dialog names the fix (update the graphics driver / repair the
+  WebView2 Runtime, one click to Microsoft's repair page) and OMP-report.txt
+  lands on the Desktop with the full probe trail. No infinite restarts, no
+  silent blank windows.
+- **The paint check tells the truth now.** "Frames confirmed reaching the
+  screen" was a line the flat-glass disease ran green through for its whole
+  life; it now says exactly what rAF proves, and the boot log records the
+  presentation-ladder state (`pix.flat` / `pix.swift` / swift_forced) of
+  every launch.
+- **CI keeps determinism.** The smoke gate pixel-probes from outside and
+  owns the verdicts on the runner; every CI launch runs with
+  `OMP_SELFPIC=0`, so the in-app ladder never relaunches mid-gate.
+- Everything else stays: identical engine flags for every window, the
+  window ladder, the OPAQUE SAFE RULE, the controller rule + composition
+  re-assert, the OMP_EXTRA_WEBVIEW_ARGS rescue valve, hung-process cleanup,
+  never-silent dialogs and Desktop reports, the panic guard, pre-boot
+  recovery and the embedded WebView2 installer.
+
 ## What's new in v0.15.8 — tested on real Windows before it ships
 
 - **The release pipeline is now smoke-gated.** No more blind releases: CI
